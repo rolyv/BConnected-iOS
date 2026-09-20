@@ -102,11 +102,11 @@ public class RemoteConfig {
     // MARK: -
 
     public var maxGroupSizeRecommended: UInt {
-        getUIntValue(forFlag: .maxGroupSizeRecommended, defaultValue: 151)
+        getUIntValue(forFlag: .maxGroupSizeRecommended, defaultValue: 10_000)
     }
 
     public var maxGroupSizeHardLimit: UInt {
-        getUIntValue(forFlag: .maxGroupSizeHardLimit, defaultValue: 1001)
+        getUIntValue(forFlag: .maxGroupSizeHardLimit, defaultValue: 10_000)
     }
 
     public var maxGroupSizeBannedMembers: UInt {
