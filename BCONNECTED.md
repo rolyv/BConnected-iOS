@@ -17,7 +17,7 @@ The full Signal target has initial BConnected display-name/icon/bundle-prefix ch
 - Integrate Groups/My groups/Discover and a real DMs-only thread query into the Signal UI; preserve existing end-to-end encryption.
 - Create an admin-send-only all-alumni group, apply the storage-service group cap, and publish the matching remote-config values.
 - Validate 8,000-member joins, sender-key distribution, fanout, offline delivery, membership changes, attachments, device memory, and push volume before making any capacity claim.
-- Add the personal Apple Developer team and APNs configuration for device/TestFlight builds. Use a separate association bundle ID for the public release.
+- Complete provisioning and APNs configuration for device/TestFlight builds. The personal Apple Developer team `94M83TZ7LM` is configured in the pilot and full Signal project. Use a separate association bundle ID for the public release.
 
 ## Group cap
 
