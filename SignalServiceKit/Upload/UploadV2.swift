@@ -24,6 +24,8 @@ extension Upload {
 extension Upload.CDN0.Form {
     public enum ParsingError: Error {
         case missingField(String)
+        case unsupportedAlgorithm
+        case invalidGoogleAcl
     }
 
     public static func parse(proto: GroupsProtoAvatarUploadAttributes) throws -> Self {
@@ -70,7 +72,7 @@ extension Upload.CDN0 {
         // field must occur early on).
         //
         // For consistency, all fields are ordered here in a known working order.
-        var textParts = uploadForm.asOrderedDictionary
+        var textParts = try uploadForm.asOrderedDictionary
         textParts.append(key: "Content-Type", value: MimeType.applicationOctetStream.rawValue)
 
         do {
@@ -92,23 +94,38 @@ extension Upload.CDN0 {
     }
 }
 
-// See: https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-UsingHTTPPOST.html
-private extension Upload.CDN0.Form {
+// See the AWS and Google Cloud Storage V4 POST policy multipart specifications.
+extension Upload.CDN0.Form {
     var asOrderedDictionary: OrderedDictionary<String, String> {
-        // We have to build up the form manually vs. simply passing in a parameters dict
-        // because AWS is sensitive to the order of the form params (at least the "key"
-        // field must occur early on).
-        var result = OrderedDictionary<String, String>()
+        get throws {
+            let signingFieldPrefix: String
+            switch self.algorithm {
+            case "AWS4-HMAC-SHA256":
+                signingFieldPrefix = "x-amz"
+            case "GOOG4-RSA-SHA256":
+                // GCS avatars use uniform bucket-level IAM. An object ACL is neither needed nor accepted.
+                guard self.acl.isEmpty else { throw ParsingError.invalidGoogleAcl }
+                signingFieldPrefix = "x-goog"
+            default:
+                throw ParsingError.unsupportedAlgorithm
+            }
+            // We have to build up the form manually vs. simply passing in a parameters dict
+            // because AWS is sensitive to the order of the form params (at least the "key"
+            // field must occur early on).
+            var result = OrderedDictionary<String, String>()
 
-        // For consistency, all fields are ordered here in a known working order.
-        result.append(key: "key", value: self.key)
-        result.append(key: "acl", value: self.acl)
-        result.append(key: "x-amz-algorithm", value: self.algorithm)
-        result.append(key: "x-amz-credential", value: self.credential)
-        result.append(key: "x-amz-date", value: self.date)
-        result.append(key: "policy", value: self.policy)
-        result.append(key: "x-amz-signature", value: self.signature)
-        return result
+            // For consistency, all fields are ordered here in a known working order.
+            result.append(key: "key", value: self.key)
+            if !self.acl.isEmpty {
+                result.append(key: "acl", value: self.acl)
+            }
+            result.append(key: "\(signingFieldPrefix)-algorithm", value: self.algorithm)
+            result.append(key: "\(signingFieldPrefix)-credential", value: self.credential)
+            result.append(key: "\(signingFieldPrefix)-date", value: self.date)
+            result.append(key: "policy", value: self.policy)
+            result.append(key: "\(signingFieldPrefix)-signature", value: self.signature)
+            return result
+        }
     }
 
 }
