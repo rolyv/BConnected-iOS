@@ -15,4 +15,4 @@ bundle exec fastlane deliver \
   --reset_ratings false \
   --automatic_release false \
   --run_precheck_before_submit false \
-  --app_identifier 'org.whispersystems.signal'
+  --app_identifier 'com.bconnected.pilot'

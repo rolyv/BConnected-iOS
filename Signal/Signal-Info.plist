@@ -40,7 +40,7 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>$(SIGNAL_BUNDLEID_PREFIX).signal</string>
+			<string>$(SIGNAL_BUNDLEID_PREFIX)</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>sgnl</string>

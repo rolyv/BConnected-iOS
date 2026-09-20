@@ -1792,8 +1792,15 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
             maxDownloadSizeBytes: UInt64,
             length: UInt16,
         ) async throws -> (AttachmentDownloads.CdnInfo, Data?) {
-            let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
             let urlPath = try downloadState.urlPath()
+            if BConnectedMediaDownload.requiresCapability(cdn: downloadState.cdnNumber(), path: urlPath) {
+                let prepared = try await BConnectedMediaDownload.prepare(cdn: downloadState.cdnNumber(), path: urlPath,
+                    maximumSize: maxDownloadSizeBytes, range: "bytes=0-\(length - 1)")
+                let response = try await prepared.session.performRequest(request: prepared.request,
+                    maxResponseSize: maxDownloadSizeBytes, ignoreAppExpiry: true)
+                return (try AttachmentDownloads.CdnInfo(response.headers), response.responseBodyData)
+            }
+            let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
             var headers = downloadState.additionalHeaders()
             headers["Content-Type"] = MimeType.applicationOctetStream.rawValue
             headers["range"] = "bytes=0-\(length - 1)"
@@ -1826,6 +1833,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
             progressBlock: OWSURLSession.ProgressBlock,
         ) async throws -> URL {
             let urlPath = try downloadState.urlPath()
+            let usesPrivateMediaCapability = BConnectedMediaDownload.requiresCapability(cdn: downloadState.cdnNumber(), path: urlPath)
             var headers = downloadState.additionalHeaders()
             headers["Content-Type"] = MimeType.applicationOctetStream.rawValue
 
@@ -1834,11 +1842,20 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                     throw AttachmentDownloads.Error.expiredCredentials
                 }
 
-                let resumeData = resumeDataCache.object(forKey: downloadState)
-                let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
+                let resumeData = usesPrivateMediaCapability ? nil : resumeDataCache.object(forKey: downloadState)
 
                 let downloadOperation: (OWSURLSession.ProgressBlock) async throws -> OWSUrlDownloadResponse
-                if let resumeData {
+                if usesPrivateMediaCapability {
+                    // Refresh the capability on every retry. URLSession resume blobs contain the old signed URL,
+                    // so this path starts a new request instead of replaying an expired capability.
+                    let prepared = try await BConnectedMediaDownload.prepare(cdn: downloadState.cdnNumber(), path: urlPath,
+                        maximumSize: maxDownloadSizeBytes)
+                    downloadOperation = {
+                        try await prepared.session.performDownload(request: prepared.request,
+                            maxResponseSize: maxDownloadSizeBytes, progressBlock: $0)
+                    }
+                } else if let resumeData {
+                    let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
                     let request = try urlSession.endpoint.buildRequest(urlPath, method: .get, headers: headers)
                     guard let requestUrl = request.url else {
                         throw OWSAssertionError("Request missing url.")
@@ -1852,6 +1869,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                         )
                     }
                 } else {
+                    let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
                     downloadOperation = {
                         return try await urlSession.performDownload(
                             urlPath,
@@ -1876,7 +1894,8 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                 // Avoid logging the whole error, as it may contain the CDN URL.
                 Logger.warn("Error: \(error.shortDescription)")
 
-                if let resumeData = ((error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data)?.nilIfEmpty {
+                if !usesPrivateMediaCapability,
+                   let resumeData = ((error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data)?.nilIfEmpty {
                     resumeDataCache.set(key: downloadState, value: resumeData)
                 }
 

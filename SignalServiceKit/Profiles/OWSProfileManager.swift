@@ -1657,8 +1657,9 @@ extension OWSProfileManager {
         assert(!avatarUrlPath.isEmpty)
         return try await Retry.performWithBackoff(maxAttempts: 4, isRetryable: { $0.isNetworkFailureOrTimeout }) {
             Logger.info("")
-            let urlSession = await SSKEnvironment.shared.signalServiceRef.sharedUrlSessionForCdn(cdnNumber: 0)
-            let response = try await urlSession.performDownload(avatarUrlPath, method: .get, maxResponseSize: .max)
+            let prepared = try await BConnectedMediaDownload.prepare(cdn: 0, path: avatarUrlPath, maximumSize: 10 * 1024 * 1024)
+            let response = try await prepared.session.performDownload(request: prepared.request,
+                maxResponseSize: 10 * 1024 * 1024, progressBlock: { _ in })
             let decryptedFileUrl = OWSFileSystem.temporaryFileUrl(
                 fileExtension: nil,
                 isAvailableWhileDeviceLocked: true,

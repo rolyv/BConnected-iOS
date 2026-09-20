@@ -835,6 +835,7 @@
 		5090B1A12F8D7239003F029D /* GroupMembershipTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5090B1A02F8D7239003F029D /* GroupMembershipTest.swift */; };
 		50925DEA2DA86E3A00DAB484 /* GroupMessageProcessorJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50925DE92DA86E3A00DAB484 /* GroupMessageProcessorJob.swift */; };
 		50925DEC2DA87AEF00DAB484 /* GroupMessageProcessorJobTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50925DEB2DA87AEF00DAB484 /* GroupMessageProcessorJobTest.swift */; };
+		BC0A10000000000000000003 /* BConnectedMediaDownloadTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0A10000000000000000004 /* BConnectedMediaDownloadTest.swift */; };
 		5093A1B12F0B1C0100A03829 /* TSRequestTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5093A1B02F0B1C0100A03829 /* TSRequestTest.swift */; };
 		5094D5052EE3A6780041F402 /* AttachmentLimits.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5094D5042EE3A6780041F402 /* AttachmentLimits.swift */; };
 		509527FA2E26F02B00A03829 /* ConnectionLockTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 509527F92E26F02B00A03829 /* ConnectionLockTest.swift */; };
@@ -4011,6 +4012,7 @@
 		F9C5CDC3289453B400548EEE /* DeviceProvisioningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C5CAF0289453B200548EEE /* DeviceProvisioningService.swift */; };
 		F9C5CDC4289453B400548EEE /* NetworkInterfaceSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C5CAF1289453B200548EEE /* NetworkInterfaceSet.swift */; };
 		F9C5CDC5289453B400548EEE /* HttpHeaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C5CAF2289453B200548EEE /* HttpHeaders.swift */; };
+		BC0A10000000000000000001 /* BConnectedMediaDownload.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0A10000000000000000002 /* BConnectedMediaDownload.swift */; };
 		F9C5CDC6289453B400548EEE /* OWSURLSessionProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C5CAF3289453B200548EEE /* OWSURLSessionProtocol.swift */; };
 		F9C5CDC8289453B400548EEE /* MessageSenderJobQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C5CAF5289453B200548EEE /* MessageSenderJobQueue.swift */; };
 		F9C5CDCA289453B400548EEE /* ContentProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C5CAF7289453B200548EEE /* ContentProxy.swift */; };
@@ -5206,6 +5208,7 @@
 		5090B1A22F8DA0B6003F029D /* SpamReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpamReport.swift; sourceTree = "<group>"; };
 		50925DE92DA86E3A00DAB484 /* GroupMessageProcessorJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupMessageProcessorJob.swift; sourceTree = "<group>"; };
 		50925DEB2DA87AEF00DAB484 /* GroupMessageProcessorJobTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupMessageProcessorJobTest.swift; sourceTree = "<group>"; };
+		BC0A10000000000000000004 /* BConnectedMediaDownloadTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedMediaDownloadTest.swift; sourceTree = "<group>"; };
 		5093A1B02F0B1C0100A03829 /* TSRequestTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TSRequestTest.swift; sourceTree = "<group>"; };
 		5094D5042EE3A6780041F402 /* AttachmentLimits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentLimits.swift; sourceTree = "<group>"; };
 		509527F92E26F02B00A03829 /* ConnectionLockTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionLockTest.swift; sourceTree = "<group>"; };
@@ -8428,6 +8431,7 @@
 		F9C5CAF0289453B200548EEE /* DeviceProvisioningService.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = DeviceProvisioningService.swift; sourceTree = "<group>"; };
 		F9C5CAF1289453B200548EEE /* NetworkInterfaceSet.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = NetworkInterfaceSet.swift; sourceTree = "<group>"; };
 		F9C5CAF2289453B200548EEE /* HttpHeaders.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HttpHeaders.swift; sourceTree = "<group>"; };
+		BC0A10000000000000000002 /* BConnectedMediaDownload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedMediaDownload.swift; sourceTree = "<group>"; };
 		F9C5CAF3289453B200548EEE /* OWSURLSessionProtocol.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OWSURLSessionProtocol.swift; sourceTree = "<group>"; };
 		F9C5CAF5289453B200548EEE /* MessageSenderJobQueue.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MessageSenderJobQueue.swift; sourceTree = "<group>"; };
 		F9C5CAF7289453B200548EEE /* ContentProxy.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ContentProxy.swift; sourceTree = "<group>"; };
@@ -14655,6 +14659,7 @@
 				F94261D1289B1B5400460798 /* OWSURLBuilderUtilTest.swift */,
 				6600F350298C8BC900B1EDB7 /* RegistrationRequestFactoryTest.swift */,
 				F9B93CDB28E1FE3500B3F8A0 /* SignalProxyTest.swift */,
+				BC0A10000000000000000004 /* BConnectedMediaDownloadTest.swift */,
 				5093A1B02F0B1C0100A03829 /* TSRequestTest.swift */,
 			);
 			name = Network;
@@ -15748,6 +15753,7 @@
 				669E8FDB28B02CC400043D28 /* OWSURLBuilderUtil.swift */,
 				669E8FE728B4153B00043D28 /* OWSUrlSession.swift */,
 				503C2F422977752B00217527 /* OWSURLSessionEndpoint.swift */,
+				BC0A10000000000000000002 /* BConnectedMediaDownload.swift */,
 				F9C5CAF3289453B200548EEE /* OWSURLSessionProtocol.swift */,
 				F9C5CABF289453B200548EEE /* ProxiedContentDownloader.swift */,
 				F9C5CABD289453B200548EEE /* ReachabilityManager.swift */,
@@ -20116,6 +20122,7 @@
 				669E8FE928B415C000043D28 /* OWSURLBuilderUtil.swift in Sources */,
 				669E8FE828B4153C00043D28 /* OWSUrlSession.swift in Sources */,
 				503C2F432977752B00217527 /* OWSURLSessionEndpoint.swift in Sources */,
+				BC0A10000000000000000001 /* BConnectedMediaDownload.swift in Sources */,
 				F9C5CDC6289453B400548EEE /* OWSURLSessionProtocol.swift in Sources */,
 				F9C5CDD0289453B400548EEE /* OWSUserProfile.swift in Sources */,
 				F9C5CBCD289453B300548EEE /* OWSVerificationStateChangeMessage+SDS.swift in Sources */,
@@ -20823,6 +20830,7 @@
 				F942628A289B1B5600460798 /* TSMessageTest.swift in Sources */,
 				D9495A702C76965600843BC1 /* TSOutgoingMessageRecipientStateTest.swift in Sources */,
 				F9426289289B1B5600460798 /* TSOutgoingMessageTest.swift in Sources */,
+				BC0A10000000000000000003 /* BConnectedMediaDownloadTest.swift in Sources */,
 				5093A1B12F0B1C0100A03829 /* TSRequestTest.swift in Sources */,
 				F942628F289B1B5600460798 /* TypingIndicatorMessageTest.swift in Sources */,
 				726C94252D6F48DA00ABF9B9 /* UncooperativeTimeoutTest.swift in Sources */,
@@ -21110,7 +21118,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.SignalNSE";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).SignalNSE";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -21163,7 +21171,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.SignalNSE";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).SignalNSE";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -21219,7 +21227,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.SignalNSE";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).SignalNSE";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -21275,7 +21283,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.SignalNSE";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).SignalNSE";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -21767,7 +21775,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.shareextension";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).shareextension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
@@ -21820,7 +21828,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.shareextension";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).shareextension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -21912,7 +21920,7 @@
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -DTESTABLE_BUILD";
 				SDKROOT = iphoneos;
-				SIGNAL_BUNDLEID_PREFIX = com.rolyvicaria.bconnected.pilot;
+				SIGNAL_BUNDLEID_PREFIX = com.bconnected.pilot;
 				SIGNAL_MERCHANTID = org.signalfoundation;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -21971,7 +21979,7 @@
 				);
 				LLVM_LTO = NO;
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX)";
 				PRODUCT_NAME = Signal;
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SDKROOT = iphoneos;
@@ -22084,7 +22092,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.shareextension";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).shareextension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -22173,7 +22181,7 @@
 				OTHER_CFLAGS = "-DNS_BLOCK_ASSERTIONS=1";
 				OTHER_SWIFT_FLAGS = "$(inherited) -DTESTABLE_BUILD";
 				SDKROOT = iphoneos;
-				SIGNAL_BUNDLEID_PREFIX = com.rolyvicaria.bconnected.pilot;
+				SIGNAL_BUNDLEID_PREFIX = com.bconnected.pilot;
 				SIGNAL_MERCHANTID = org.signalfoundation;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -22232,7 +22240,7 @@
 				);
 				LLVM_LTO = NO;
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX)";
 				PRODUCT_NAME = Signal;
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SDKROOT = iphoneos;
@@ -22345,7 +22353,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal.shareextension";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).shareextension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -22439,7 +22447,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_SWIFT_FLAGS = "$(inherited) -DTESTABLE_BUILD -DUSE_DEBUG_UI";
 				SDKROOT = iphoneos;
-				SIGNAL_BUNDLEID_PREFIX = com.rolyvicaria.bconnected.pilot;
+				SIGNAL_BUNDLEID_PREFIX = com.bconnected.pilot;
 				SIGNAL_MERCHANTID = org.signalfoundation;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -22542,7 +22550,7 @@
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_CFLAGS = "-DNS_BLOCK_ASSERTIONS=1";
 				SDKROOT = iphoneos;
-				SIGNAL_BUNDLEID_PREFIX = com.rolyvicaria.bconnected.pilot;
+				SIGNAL_BUNDLEID_PREFIX = com.bconnected.pilot;
 				SIGNAL_MERCHANTID = org.signalfoundation;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
@@ -22603,7 +22611,7 @@
 				);
 				LLVM_LTO = NO;
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX)";
 				PRODUCT_NAME = Signal;
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SDKROOT = iphoneos;
@@ -22643,7 +22651,7 @@
 				);
 				LLVM_LTO = NO;
 				OTHER_LDFLAGS = "$(inherited)";
-				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX).signal";
+				PRODUCT_BUNDLE_IDENTIFIER = "$(SIGNAL_BUNDLEID_PREFIX)";
 				PRODUCT_NAME = Signal;
 				RUN_CLANG_STATIC_ANALYZER = YES;
 				SDKROOT = iphoneos;
