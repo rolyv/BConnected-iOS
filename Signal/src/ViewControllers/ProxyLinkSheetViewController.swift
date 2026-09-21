@@ -56,6 +56,12 @@ class ProxyLinkSheetViewController: StackSheetViewController {
 
         // Address pill
         let proxyHost = url.fragment!
+
+        do { try SignalProxy.requireSupportedConfiguration() }
+        catch {
+            presentToast(text: "Proxies are unavailable for this chat transport.")
+            return
+        }
         let addressLabel = UILabel()
         addressLabel.text = proxyHost
         addressLabel.font = .dynamicTypeBody.monospaced()

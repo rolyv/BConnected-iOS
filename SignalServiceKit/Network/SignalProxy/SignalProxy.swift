@@ -13,7 +13,14 @@ public extension Notification.Name {
 public class SignalProxy: NSObject {
     public static var isEnabled: Bool { useProxy && host != nil }
 
-    public static var isEnabledAndReady: Bool { isEnabled && relayServer.isReady }
+    public static var isEnabledAndReady: Bool { isEnabled && configurationError == nil && relayServer.isReady }
+
+    @Atomic public private(set) static var configurationError: BConnectedTransportError?
+
+    /// Call before persisting a user-requested proxy, so unavailable routing is explicit.
+    public static func requireSupportedConfiguration() throws {
+        try SSKEnvironment.shared.networkManagerRef.requireSignalProxySupport()
+    }
 
     public static var connectionProxyDictionary: [AnyHashable: Any]? { relayServer.connectionProxyDictionary }
 
@@ -132,6 +139,10 @@ public class SignalProxy: NSObject {
         guard !CurrentAppContext().isNSE else { return }
 
         if isEnabled {
+            guard validateProxySupport() else {
+                relayServer.stop()
+                return
+            }
             if restartIfNeeded, relayServer.isStarted {
                 relayServer.restartIfNeeded(ignoreBackoff: true)
             } else {
@@ -142,32 +153,45 @@ public class SignalProxy: NSObject {
         }
     }
 
+    private static func validateProxySupport() -> Bool {
+        do {
+            try requireSupportedConfiguration()
+            configurationError = nil
+            return true
+        } catch {
+            configurationError = (error as? BConnectedTransportError) ?? .invalidOwnedConfiguration
+            Logger.warn("Proxy unavailable for the selected chat transport.")
+            return false
+        }
+    }
+
     private static func updateLibSignalProxy() {
         let networkManager = SSKEnvironment.shared.networkManagerRef
         if isEnabled {
+            guard validateProxySupport() else { return }
             if let (proxyHost, proxyPort) = host.flatMap({ ProxyClient.parseHost($0) }) {
-                if let libsignalNet = networkManager.libsignalNet {
-                    Logger.info("Applying signal proxy settings to libsignal Net.")
-                    do {
-                        try libsignalNet.setProxy(host: proxyHost, port: proxyPort)
-                        Logger.info("Applied signal proxy settings to libsignal Net.")
-                    } catch {
-                        owsFailDebug("failed to set proxy on libsignal-net (need better validation)")
-                        // This will poison the Net instance, failing all new connections,
-                        // until a valid proxy is set or cleared.
-                    }
+                do {
+                    try networkManager.setSignalProxy(host: proxyHost, port: proxyPort)
+                } catch {
+                    // A legacy native failure retains its poisoned connection state.
+                    // Never clear it or fall back to a direct connection here.
+                    Logger.warn("Failed to apply proxy settings to the chat transport.")
                 }
             } else {
-                // We can't print the invalid host in the logs, because that's private!
                 owsFailDebug("failed to parse previously-validated proxy host")
             }
         } else {
-            networkManager.resetLibsignalNetProxySettings()
+            configurationError = nil
+            do { try networkManager.resetLibsignalNetProxySettings() }
+            catch {
+                configurationError = (error as? BConnectedTransportError) ?? .invalidOwnedConfiguration
+                Logger.warn("Proxy unavailable for the selected chat transport.")
+            }
         }
     }
 
     public class func startRelayServer() {
-        guard isEnabled else { return }
+        guard isEnabled, validateProxySupport() else { return }
         Logger.info("Starting the proxy relay server...")
         relayServer.start()
     }

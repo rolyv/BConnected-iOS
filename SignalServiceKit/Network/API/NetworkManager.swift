@@ -31,28 +31,30 @@ public class NetworkManager: NetworkManagerProtocol {
         DependenciesBridge.shared.chatConnectionManager
     }
 
-    public let libsignalNet: Net?
+    public let libsignalNet: (any BConnectedChatTransport)?
 
-    public init(appReadiness: AppReadiness, libsignalNet: Net?) {
+    public init(appReadiness: AppReadiness, libsignalNet: (any BConnectedChatTransport)?) {
         self.appReadiness = appReadiness
         self.libsignalNet = libsignalNet
         if let libsignalNet {
             self.reachabilityDidChangeObserver = Task {
                 for await _ in NotificationCenter.default.notifications(named: SSKReachability.owsReachabilityDidChange) {
                     do {
-                        Self.resetLibsignalNetProxySettings(libsignalNet, appReadiness: appReadiness)
-                        try libsignalNet.networkDidChange()
+                        try BConnectedNetworkConfiguration(transport: libsignalNet).networkDidChange(
+                            inAppProxyEnabled: SignalProxy.isEnabled,
+                            systemProxy: { ProxyConfig.fromCFNetwork(rejectUnsupported: !libsignalNet.capabilities.allows(.proxy)) }
+                        )
                     } catch {
-                        owsFailDebug("error notify libsignal of network change: \(error)")
+                        Logger.warn("Transport rejected network configuration: \(error)")
                     }
                 }
             }
 
-            self.resetLibsignalNetProxySettings()
-            Logger.info("Initialized libsignal Net and reset proxy settings (signalProxyEnabled: \(SignalProxy.isEnabled)).")
+            self.updateProxySettingsAfterConfigurationChange()
+            Logger.info("Initialized chat transport network observer.")
             appReadiness.runNowOrWhenAppDidBecomeReadyAsync {
                 // We did this once already, but doing it properly depends on RemoteConfig.
-                self.resetLibsignalNetProxySettings()
+                self.updateProxySettingsAfterConfigurationChange()
             }
         } else {
             self.reachabilityDidChangeObserver = nil
@@ -68,35 +70,27 @@ public class NetworkManager: NetworkManagerProtocol {
 
     // MARK: -
 
-    func resetLibsignalNetProxySettings() {
-        guard let libsignalNet else {
-            // In tests without a libsignal Net instance, no action is needed.
-            return
-        }
-        Self.resetLibsignalNetProxySettings(libsignalNet, appReadiness: appReadiness)
+    func requireSignalProxySupport() throws {
+        guard let libsignalNet else { return } // Explicit no-network test injection.
+        try BConnectedNetworkConfiguration(transport: libsignalNet).requireProxySupport()
     }
 
-    private static func resetLibsignalNetProxySettings(_ libsignalNet: Net, appReadiness: AppReadiness) {
-        guard !SignalProxy.isEnabled else {
-            // Don't stomp on in-app proxy settings, which are managed by SignalProxy.
-            return
-        }
+    func setSignalProxy(host: String, port: UInt16?) throws {
+        guard let libsignalNet else { return }
+        try BConnectedNetworkConfiguration(transport: libsignalNet).setSignalProxy(host: host, port: port)
+    }
 
-        if let systemProxy = ProxyConfig.fromCFNetwork() {
-            Logger.info("System '\(systemProxy.scheme)' proxy detected")
-            do {
-                try libsignalNet.setProxy(scheme: systemProxy.scheme, host: systemProxy.host, port: systemProxy.port, username: systemProxy.username, password: systemProxy.password)
-                return
-            } catch {
-                Logger.error("invalid proxy: \(error)")
-                // When setProxy(...) fails, it refuses to connect in case your proxy was load-bearing.
-                // That makes sense for in-app settings, but less so for system-level proxies, given that we are already ignoring system-level proxies we don't understand.
-                // Fall through to the reset call.
-            }
-        }
+    func resetLibsignalNetProxySettings() throws {
+        guard let libsignalNet else { return }
+        try BConnectedNetworkConfiguration(transport: libsignalNet).resetProxy(
+            inAppProxyEnabled: SignalProxy.isEnabled,
+            systemProxy: { ProxyConfig.fromCFNetwork(rejectUnsupported: !libsignalNet.capabilities.allows(.proxy)) }
+        )
+    }
 
-        // This may be clearing a system proxy, or a previously set in-app proxy that is no longer in use.
-        libsignalNet.clearProxy()
+    private func updateProxySettingsAfterConfigurationChange() {
+        do { try resetLibsignalNetProxySettings() }
+        catch { Logger.warn("Transport rejected proxy configuration: \(error)") }
     }
 
     // MARK: -
@@ -161,6 +155,12 @@ public class NetworkManager: NetworkManagerProtocol {
     }
 
     private func _asyncRequest(_ request: TSRequest) async throws -> HTTPResponse {
+        if let libsignalNet {
+            try BConnectedNetworkConfiguration(transport: libsignalNet).requireRequestedProxySupported(
+                inAppProxyEnabled: SignalProxy.isEnabled,
+                systemProxy: { ProxyConfig.fromCFNetwork(rejectUnsupported: !libsignalNet.capabilities.allows(.proxy)) }
+            )
+        }
         do {
             return try await chatConnectionManager.makeRequest(request)
         } catch {
@@ -174,74 +174,15 @@ public class NetworkManager: NetworkManagerProtocol {
 
 // MARK: -
 
-private struct ProxyConfig {
-    var scheme: String
-    var host: String
-    var port: UInt16?
-    var username: String?
-    var password: String?
-
-    static func fromCFNetwork() -> Self? {
+private enum ProxyConfig {
+    static func fromCFNetwork(rejectUnsupported: Bool) -> BConnectedSystemProxy? {
         let chatURL = URL(string: TSConstants.mainServiceURL)!
         guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() else {
             return nil
         }
         let proxies = CFNetworkCopyProxiesForURL(chatURL as CFURL, settings).takeRetainedValue() as! [NSDictionary]
 
-        for proxyConfig in proxies {
-            switch proxyConfig[kCFProxyTypeKey] as! NSObject? {
-            case kCFProxyTypeNone:
-                // CFNetworkCopyProxiesForURL returns a list of proxies to try in order,
-                // and that can include "try a direct connection".
-                // But libsignal only supports one global proxy setting,
-                // so if we get told to try a direct connection, that's what we'll do.
-                return nil
-            case kCFProxyTypeHTTP:
-                return ProxyConfig(
-                    scheme: "http",
-                    host: proxyConfig[kCFProxyHostNameKey] as! String,
-                    port: proxyConfig[kCFProxyPortNumberKey] as! UInt16?,
-                    username: proxyConfig[kCFProxyUsernameKey] as! String?,
-                    password: proxyConfig[kCFProxyPasswordKey] as! String?,
-                )
-            case kCFProxyTypeHTTPS:
-                // This seems to mean "HTTP proxy for HTTPS connections" rather than "proxy that itself uses TLS".
-                // Leave room for the latter interpretation if the port number is traditionally HTTPS.
-                let port = proxyConfig[kCFProxyPortNumberKey] as! UInt16?
-                return ProxyConfig(
-                    scheme: (port == 443 || port == 8443) ? "https" : "http",
-                    host: proxyConfig[kCFProxyHostNameKey] as! String,
-                    port: port,
-                    username: proxyConfig[kCFProxyUsernameKey] as! String?,
-                    password: proxyConfig[kCFProxyPasswordKey] as! String?,
-                )
-            case kCFProxyTypeSOCKS:
-                // iOS doesn't distinguish between SOCKS4 and SOCKS5. Defer to libsignal's default.
-                return ProxyConfig(
-                    scheme: "socks",
-                    host: proxyConfig[kCFProxyHostNameKey] as! String,
-                    port: proxyConfig[kCFProxyPortNumberKey] as! UInt16?,
-                    username: proxyConfig[kCFProxyUsernameKey] as! String?,
-                    password: proxyConfig[kCFProxyPasswordKey] as! String?,
-                )
-            case kCFProxyTypeAutoConfigurationJavaScript, kCFProxyTypeAutoConfigurationURL:
-                // CFNetwork provides ways to execute these, but they're not something that can be done synchronously.
-                // PAC files are rare, though; we can come back to this if it turns out to be used in practice.
-                Logger.warn("Skipping PAC-based proxy configuration")
-                continue
-            case kCFProxyTypeFTP:
-                // Not relevant for an HTTPS request (honestly, it should never be returned in the first place)
-                continue
-            case let unknownProxyType?:
-                Logger.warn("Skipping unknown proxy type '\(unknownProxyType)'")
-                continue
-            case nil:
-                Logger.warn("Skipping proxy with nil kCFProxyType; this is probably an Apple bug!")
-                continue
-            }
-        }
-
-        return nil
+        return BConnectedSystemProxyParser.firstProxy(in: proxies, rejectUnsupported: rejectUnsupported)
     }
 }
 

@@ -174,6 +174,14 @@ class ProxySettingsViewController: OWSTableViewController2 {
 
         guard !notifyForInvalidHostIfNecessary() else { return }
 
+        if useProxy {
+            do { try SignalProxy.requireSupportedConfiguration() }
+            catch {
+                presentToast(text: "Proxies are unavailable for this chat transport.")
+                return
+            }
+        }
+
         SSKEnvironment.shared.databaseStorageRef.write { transaction in
             SignalProxy.setProxyHost(host: self.host, useProxy: self.useProxy, transaction: transaction)
         }
