@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0C01000000000000000005 /* registration-key-commitment-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0C01000000000000000006 /* registration-key-commitment-v1.json */; };
+		BC0C01000000000000000003 /* BConnectedRegistrationKeyCommitmentTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C01000000000000000004 /* BConnectedRegistrationKeyCommitmentTest.swift */; };
+		BC0C01000000000000000001 /* BConnectedRegistrationKeyCommitment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C01000000000000000002 /* BConnectedRegistrationKeyCommitment.swift */; };
 		040277FA303DCFA6009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040277F9303DCF9B009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift */; };
 		040277FE303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040277FD303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift */; };
 		040506F82F7EEF3B0078B769 /* RemoteReleaseNotesFetchingManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 040506F72F7EEF290078B769 /* RemoteReleaseNotesFetchingManager.swift */; };
@@ -4260,6 +4263,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0C01000000000000000006 /* registration-key-commitment-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = registration-key-commitment-v1.json; sourceTree = "<group>"; };
+		BC0C01000000000000000004 /* BConnectedRegistrationKeyCommitmentTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRegistrationKeyCommitmentTest.swift; sourceTree = "<group>"; };
+		BC0C01000000000000000002 /* BConnectedRegistrationKeyCommitment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRegistrationKeyCommitment.swift; sourceTree = "<group>"; };
 		040277F9303DCF9B009C1468 /* LocalFileBackupAttachmentRestoreProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFileBackupAttachmentRestoreProgress.swift; sourceTree = "<group>"; };
 		040277FD303DE4F2009C1468 /* ChatListViewController+LocalFileBackupRestoreProgressView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ChatListViewController+LocalFileBackupRestoreProgressView.swift"; sourceTree = "<group>"; };
 		040506F72F7EEF290078B769 /* RemoteReleaseNotesFetchingManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteReleaseNotesFetchingManager.swift; sourceTree = "<group>"; };
@@ -10294,6 +10300,7 @@
 				50BA9B2B304A65E9006DB636 /* RegistrationIdentifier.swift */,
 				6600F353298C8FCA00B1EDB7 /* RegistrationSession.swift */,
 				6600F355298C903000B1EDB7 /* RegistrationSessionManager.swift */,
+				BC0C01000000000000000002 /* BConnectedRegistrationKeyCommitment.swift */,
 				6600F357298D646E00B1EDB7 /* RegistrationSessionManagerImpl.swift */,
 			);
 			path = Registration;
@@ -10303,6 +10310,8 @@
 			isa = PBXGroup;
 			children = (
 				6600F366298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift */,
+				BC0C01000000000000000004 /* BConnectedRegistrationKeyCommitmentTest.swift */,
+				BC0C01000000000000000006 /* registration-key-commitment-v1.json */,
 			);
 			path = Registration;
 			sourceTree = "<group>";
@@ -16623,6 +16632,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BC0C01000000000000000005 /* registration-key-commitment-v1.json in Resources */,
 				D90AA5F52CC9616B00021CB0 /* account_data_00.binproto in Resources */,
 				D90AA3B62CC9616B00021CB0 /* account_data_00.txtproto in Resources */,
 				D90AA3CA2CC9616B00021CB0 /* account_data_01.binproto in Resources */,
@@ -20246,6 +20256,7 @@
 				66A1DF75298C73D900C4E4A7 /* RegistrationServiceResponses.swift in Sources */,
 				6600F354298C8FCA00B1EDB7 /* RegistrationSession.swift in Sources */,
 				6600F356298C903000B1EDB7 /* RegistrationSessionManager.swift in Sources */,
+				BC0C01000000000000000001 /* BConnectedRegistrationKeyCommitment.swift in Sources */,
 				6600F358298D646E00B1EDB7 /* RegistrationSessionManagerImpl.swift in Sources */,
 				6691E7F22996E9BC0032A68A /* RegistrationSessionManagerMock.swift in Sources */,
 				6646573B2AC388C70099DE1C /* RegistrationStateChangeManager.swift in Sources */,
@@ -20771,6 +20782,7 @@
 				F903C29B28EC7AE60035B42B /* RegistrationIdGeneratorTest.swift in Sources */,
 				6600F351298C8BC900B1EDB7 /* RegistrationRequestFactoryTest.swift in Sources */,
 				6600F367298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift in Sources */,
+				BC0C01000000000000000003 /* BConnectedRegistrationKeyCommitmentTest.swift in Sources */,
 				F9426259289B1B5500460798 /* RemoteConfigManagerTests.swift in Sources */,
 				F945FE4D298481EA00C835C7 /* RingrtcFieldTrialsTest.swift in Sources */,
 				F942624E289B1B5500460798 /* SDSDatabaseStorageObservationTest.swift in Sources */,
