@@ -106,7 +106,7 @@ public final class ContactDiscoveryManagerImpl: ContactDiscoveryManager {
         remoteAttestationAuthFetcher: RemoteAttestationAuthFetcher,
         tsAccountManager: TSAccountManager,
         udManager: OWSUDManager,
-        libsignalNet: Net,
+        libsignalNet: any BConnectedChatTransport,
     ) {
         self.init(
             contactDiscoveryTaskQueue: ContactDiscoveryTaskQueueImpl(

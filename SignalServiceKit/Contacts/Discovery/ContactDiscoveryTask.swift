@@ -20,7 +20,7 @@ final class ContactDiscoveryTaskQueueImpl: ContactDiscoveryTaskQueue {
     private let remoteAttestationAuthFetcher: RemoteAttestationAuthFetcher
     private let tsAccountManager: TSAccountManager
     private let udManager: OWSUDManager
-    private let libsignalNet: Net
+    private let libsignalNet: any BConnectedChatTransport
 
     init(
         db: any DB,
@@ -31,7 +31,7 @@ final class ContactDiscoveryTaskQueueImpl: ContactDiscoveryTaskQueue {
         remoteAttestationAuthFetcher: RemoteAttestationAuthFetcher,
         tsAccountManager: TSAccountManager,
         udManager: OWSUDManager,
-        libsignalNet: Net,
+        libsignalNet: any BConnectedChatTransport,
     ) {
         self.db = db
         self.recipientDatabaseTable = recipientDatabaseTable
@@ -45,6 +45,8 @@ final class ContactDiscoveryTaskQueueImpl: ContactDiscoveryTaskQueue {
     }
 
     func perform(for phoneNumbers: Set<String>, mode: ContactDiscoveryMode) async throws -> [SignalRecipient] {
+        // Deny before reading discovery state or fetching upstream CDSI credentials.
+        let legacyNet = try libsignalNet.requireLegacyService(.phoneContactDiscovery)
         let e164s = Set(phoneNumbers.compactMap { E164($0) })
         if e164s.isEmpty {
             return []
@@ -55,7 +57,7 @@ final class ContactDiscoveryTaskQueueImpl: ContactDiscoveryTaskQueue {
             e164sToLookup: e164s,
             mode: mode,
             udManager: udManager,
-            connectionImpl: libsignalNet,
+            connectionImpl: legacyNet,
             remoteAttestationAuthFetcher: remoteAttestationAuthFetcher,
         ).perform()
 

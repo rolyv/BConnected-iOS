@@ -133,7 +133,7 @@ public class DependenciesBridge {
     public let interactionStore: InteractionStore
     public let keyTransparencyManager: KeyTransparencyManager
     public let lastVisibleInteractionStore: LastVisibleInteractionStore
-    public let libsignalNet: LibSignalClient.Net
+    public let libsignalNet: any BConnectedChatTransport
     public let linkAndSyncManager: LinkAndSyncManager
     public let linkPreviewManager: LinkPreviewManager
     public let linkPreviewSettingStore: LinkPreviewSettingStore
@@ -286,7 +286,7 @@ public class DependenciesBridge {
         interactionStore: InteractionStore,
         keyTransparencyManager: KeyTransparencyManager,
         lastVisibleInteractionStore: LastVisibleInteractionStore,
-        libsignalNet: LibSignalClient.Net,
+        libsignalNet: any BConnectedChatTransport,
         linkAndSyncManager: LinkAndSyncManager,
         linkPreviewManager: LinkPreviewManager,
         linkPreviewSettingStore: LinkPreviewSettingStore,

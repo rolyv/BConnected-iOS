@@ -109,7 +109,7 @@ extension BackupImportSource {
     func deriveBackupEncryptionKeyWithSVRBIfNeeded(
         backupRequestManager: BackupRequestManager,
         db: any DB,
-        libsignalNet: LibSignalClient.Net,
+        libsignalNet: any BConnectedChatTransport,
         nonceStore: BackupNonceMetadataStore,
         logger: PrefixedLogger,
     ) async throws -> MessageBackupKey {
@@ -160,17 +160,18 @@ extension BackupImportSource {
         chatAuth: ChatServiceAuth,
         backupRequestManager: BackupRequestManager,
         db: any DB,
-        libsignalNet: LibSignalClient.Net,
+        libsignalNet: any BConnectedChatTransport,
         nonceStore: BackupNonceMetadataStore,
         logger: PrefixedLogger,
     ) async throws -> BackupForwardSecrecyToken {
+        let legacyNet = try libsignalNet.requireLegacyService(.remoteBackupRecovery)
         let svrBAuth = try await backupRequestManager.fetchSVRBAuthCredential(
             key: key,
             chatServiceAuth: chatAuth,
             logger: logger,
         )
 
-        let svrB = libsignalNet.svrB(auth: svrBAuth)
+        let svrB = legacyNet.svrB(auth: svrBAuth)
 
         let response: SvrB.RestoreBackupResponse
         do {
@@ -252,7 +253,7 @@ extension BackupExportPurpose {
     func deriveEncryptionMetadataWithSVRBIfNeeded(
         backupRequestManager: BackupRequestManager,
         db: any DB,
-        libsignalNet: LibSignalClient.Net,
+        libsignalNet: any BConnectedChatTransport,
         nonceStore: BackupNonceMetadataStore,
     ) async throws -> EncryptionMetadata {
         switch self {
@@ -298,16 +299,17 @@ extension BackupExportPurpose {
         chatAuth: ChatServiceAuth,
         backupRequestManager: BackupRequestManager,
         db: any DB,
-        libsignalNet: LibSignalClient.Net,
+        libsignalNet: any BConnectedChatTransport,
         nonceStore: BackupNonceMetadataStore,
     ) async throws -> EncryptionMetadata {
+        let legacyNet = try libsignalNet.requireLegacyService(.remoteBackupRecovery)
         let svrBAuth = try await backupRequestManager.fetchSVRBAuthCredential(
             key: key,
             chatServiceAuth: chatAuth,
             logger: logger,
         )
 
-        let svrB = libsignalNet.svrB(auth: svrBAuth)
+        let svrB = legacyNet.svrB(auth: svrBAuth)
 
         // We want what was the "next" secret metadata from the _last_ backup we made.
         // This is used as an input into the generator for the metadata for this new

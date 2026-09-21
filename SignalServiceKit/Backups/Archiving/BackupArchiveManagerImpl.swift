@@ -52,7 +52,7 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
     private let fullTextSearchIndexer: BackupArchiveFullTextSearchIndexer
     private let groupRecipientArchiver: BackupArchiveGroupRecipientArchiver
     private let kvStore: KeyValueStore
-    private let libsignalNet: LibSignalClient.Net
+    private let libsignalNet: any BConnectedChatTransport
     private let localStorage: AccountKeyStore
     private let localRecipientArchiver: BackupArchiveLocalRecipientArchiver
     private let logger: PrefixedLogger
@@ -93,7 +93,7 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
         encryptedStreamProvider: BackupArchiveEncryptedProtoStreamProvider,
         fullTextSearchIndexer: BackupArchiveFullTextSearchIndexer,
         groupRecipientArchiver: BackupArchiveGroupRecipientArchiver,
-        libsignalNet: LibSignalClient.Net,
+        libsignalNet: any BConnectedChatTransport,
         localStorage: AccountKeyStore,
         localRecipientArchiver: BackupArchiveLocalRecipientArchiver,
         messagePipelineSupervisor: MessagePipelineSupervisor,
@@ -272,6 +272,7 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
         var localFileBackupAttachmentCollector: LocalFileBackupAttachmentCollector?
         switch backupPurpose {
         case .remoteExport(let key, let chatAuth):
+            try libsignalNet.capabilities.require(.remoteBackupRecovery)
             // If an SVRB restore has been scheduled, do this restore before continuing
             // with the remote backup.  This ensures the local and remote state are
             // consistent and avoids the possibility of a backup being created that
@@ -296,7 +297,7 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
                 }
             }
         case .linkNsync:
-            break
+            try libsignalNet.capabilities.require(.provisioning)
         case .localExport(_, let attachmentCollector):
             localFileBackupAttachmentCollector = attachmentCollector
         }
@@ -766,7 +767,8 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
         progress progressSink: OWSProgressSink?,
         logger: PrefixedLogger,
     ) async throws {
-
+        if case .remote = source { try libsignalNet.capabilities.require(.remoteBackupRecovery) }
+        if case .linkNsync = source { try libsignalNet.capabilities.require(.provisioning) }
         let backupEncryptionKey = try await source.deriveBackupEncryptionKeyWithSVRBIfNeeded(
             backupRequestManager: backupRequestManager,
             db: db,
@@ -1537,6 +1539,7 @@ public class BackupArchiveManagerImpl: BackupArchiveManager {
         auth: ChatServiceAuth,
         logger: PrefixedLogger,
     ) async throws {
+        try libsignalNet.capabilities.require(.remoteBackupRecovery)
         let backupServiceAuth = try await backupRequestManager.fetchBackupServiceAuthForRegistration(
             key: key,
             localAci: key.aci,

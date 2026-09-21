@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0C08000000000000000001 /* BConnectedAppTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C08000000000000000002 /* BConnectedAppTransport.swift */; };
+		BC0C08000000000000000003 /* BConnectedAppTransportTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C08000000000000000004 /* BConnectedAppTransportTest.swift */; };
 		BC0C07000000000000000003 /* BConnectedUpdatesFactoryTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C07000000000000000004 /* BConnectedUpdatesFactoryTest.swift */; };
 		BC0C06000000000000000001 /* BConnectedProvisioningConsumer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C06000000000000000002 /* BConnectedProvisioningConsumer.swift */; };
 		BC0C06000000000000000003 /* BConnectedProvisioningConsumerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C06000000000000000004 /* BConnectedProvisioningConsumerTest.swift */; };
@@ -4275,6 +4277,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0C08000000000000000002 /* BConnectedAppTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedAppTransport.swift; sourceTree = "<group>"; };
+		BC0C08000000000000000004 /* BConnectedAppTransportTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedAppTransportTest.swift; sourceTree = "<group>"; };
 		BC0C07000000000000000004 /* BConnectedUpdatesFactoryTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedUpdatesFactoryTest.swift; sourceTree = "<group>"; };
 		BC0C06000000000000000002 /* BConnectedProvisioningConsumer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedProvisioningConsumer.swift; sourceTree = "<group>"; };
 		BC0C06000000000000000004 /* BConnectedProvisioningConsumerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedProvisioningConsumerTest.swift; sourceTree = "<group>"; };
@@ -14698,6 +14702,7 @@
 				BC0C04000000000000000004 /* BConnectedNetworkConfigurationTest.swift */,
 				BC0C05000000000000000004 /* BConnectedURLSessionPolicyTest.swift */,
 				BC0C06000000000000000004 /* BConnectedProvisioningConsumerTest.swift */,
+				BC0C08000000000000000004 /* BConnectedAppTransportTest.swift */,
 				BC0C07000000000000000004 /* BConnectedUpdatesFactoryTest.swift */,
 				5093A1B02F0B1C0100A03829 /* TSRequestTest.swift */,
 			);
@@ -15799,6 +15804,7 @@
 				BC0C04000000000000000002 /* BConnectedNetworkConfiguration.swift */,
 				BC0C05000000000000000002 /* BConnectedURLSessionPolicy.swift */,
 				BC0C06000000000000000002 /* BConnectedProvisioningConsumer.swift */,
+				BC0C08000000000000000002 /* BConnectedAppTransport.swift */,
 				F9C5CAF3289453B200548EEE /* OWSURLSessionProtocol.swift */,
 				F9C5CABF289453B200548EEE /* ProxiedContentDownloader.swift */,
 				F9C5CABD289453B200548EEE /* ReachabilityManager.swift */,
@@ -20175,6 +20181,7 @@
 				BC0C04000000000000000001 /* BConnectedNetworkConfiguration.swift in Sources */,
 				BC0C05000000000000000001 /* BConnectedURLSessionPolicy.swift in Sources */,
 				BC0C06000000000000000001 /* BConnectedProvisioningConsumer.swift in Sources */,
+				BC0C08000000000000000001 /* BConnectedAppTransport.swift in Sources */,
 				F9C5CDC6289453B400548EEE /* OWSURLSessionProtocol.swift in Sources */,
 				F9C5CDD0289453B400548EEE /* OWSUserProfile.swift in Sources */,
 				F9C5CBCD289453B300548EEE /* OWSVerificationStateChangeMessage+SDS.swift in Sources */,
@@ -20890,6 +20897,7 @@
 				BC0C04000000000000000003 /* BConnectedNetworkConfigurationTest.swift in Sources */,
 				BC0C05000000000000000003 /* BConnectedURLSessionPolicyTest.swift in Sources */,
 				BC0C06000000000000000003 /* BConnectedProvisioningConsumerTest.swift in Sources */,
+				BC0C08000000000000000003 /* BConnectedAppTransportTest.swift in Sources */,
 				BC0C07000000000000000003 /* BConnectedUpdatesFactoryTest.swift in Sources */,
 				5093A1B12F0B1C0100A03829 /* TSRequestTest.swift in Sources */,
 				F942628F289B1B5600460798 /* TypingIndicatorMessageTest.swift in Sources */,

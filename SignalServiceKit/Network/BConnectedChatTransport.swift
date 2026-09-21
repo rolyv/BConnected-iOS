@@ -4,7 +4,7 @@ public import Foundation
 public import LibSignalClient
 
 /// A small dependency boundary for chat users. Recovery/discovery/proxy APIs do not belong here.
-/// Existing AppSetup composition has not yet switched to this protocol.
+/// AppSetup injects this boundary; owned composition never constructs a legacy Net.
 public protocol BConnectedChatTransport: AnyObject {
     var capabilities: BConnectedTransportCapabilities { get }
 

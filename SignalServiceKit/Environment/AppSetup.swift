@@ -216,12 +216,28 @@ extension AppSetup.GlobalsContinuation {
             return remoteConfigProvider.warmCaches(tx: tx)
         }
 
-        let libsignalNet = Net(
+        let libsignalNet: any BConnectedChatTransport
+        #if BCONNECTED_LEGACY_TRANSPORT
+        // Explicit upstream development branch only. Never selected by missing owned config.
+        libsignalNet = Net(
             env: TSConstants.isUsingProductionService ? .production : .staging,
             userAgent: HttpHeaders.userAgentHeaderValueSignalIos,
             buildVariant: BuildFlags.netBuildVariant,
             remoteConfig: remoteConfig.netConfig(),
         )
+        #else
+        do {
+            let owned = try BConnectedOwnedTransportConfiguration(
+                info: Bundle.main.infoDictionary ?? [:],
+                userAgent: HttpHeaders.userAgentHeaderValueSignalIos
+            )
+            libsignalNet = try owned.makeTransport()
+        } catch {
+            // Keep errors generic: no credential/configuration values enter startup logs.
+            // The independent release guard remains until integrated readiness is verified.
+            owsFail("BConnected owned transport inputs or native dependency are unavailable.")
+        }
+        #endif
 
         let cron = Cron(
             appVersion: appVersion.currentAppVersion4,
@@ -2114,7 +2130,7 @@ extension AppSetup {
         fileprivate let appReadiness: AppReadiness
         fileprivate let authCredentialStore: AuthCredentialStore
         public let dependenciesBridge: DependenciesBridge
-        fileprivate let libsignalNet: Net
+        fileprivate let libsignalNet: any BConnectedChatTransport
         fileprivate let remoteConfigManager: RemoteConfigManager
         public let sskEnvironment: SSKEnvironment
         fileprivate let backgroundTask: OWSBackgroundTask
@@ -2130,7 +2146,7 @@ extension AppSetup {
             appReadiness: AppReadiness,
             authCredentialStore: AuthCredentialStore,
             dependenciesBridge: DependenciesBridge,
-            libsignalNet: Net,
+            libsignalNet: any BConnectedChatTransport,
             sskEnvironment: SSKEnvironment,
             backgroundTask: OWSBackgroundTask,
             authCredentialManager: any AuthCredentialManager,
@@ -2182,7 +2198,7 @@ extension AppSetup {
         private let appReadiness: AppReadiness
         private let authCredentialStore: AuthCredentialStore
         public let dependenciesBridge: DependenciesBridge
-        private let libsignalNet: Net
+        private let libsignalNet: any BConnectedChatTransport
         private let sskEnvironment: SSKEnvironment
 
         @MainActor private var didRunLaunchTasks = false
@@ -2192,7 +2208,7 @@ extension AppSetup {
             appReadiness: AppReadiness,
             authCredentialStore: AuthCredentialStore,
             dependenciesBridge: DependenciesBridge,
-            libsignalNet: Net,
+            libsignalNet: any BConnectedChatTransport,
             sskEnvironment: SSKEnvironment,
         ) {
             self.appContext = appContext
@@ -2225,7 +2241,13 @@ extension AppSetup.FinalContinuation {
                 dependenciesBridge.tsAccountManager.warmCaches(tx: tx)
                 return sskEnvironment.remoteConfigManagerRef.warmCaches(tx: tx)
             }
-            libsignalNet.setRemoteConfig(remoteConfig.netConfig(), buildVariant: BuildFlags.netBuildVariant)
+            do {
+                try libsignalNet.applyLegacyNetworkConfiguration {
+                    $0.setRemoteConfig(remoteConfig.netConfig(), buildVariant: BuildFlags.netBuildVariant)
+                }
+            } catch {
+                owsFail("Invalid BConnected transport composition for native configuration.")
+            }
         }
 
         // Warm (or re-warm) all of the caches. In theory, every cache is
