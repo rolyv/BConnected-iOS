@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0C03000000000000000001 /* BConnectedChatConsumer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C03000000000000000002 /* BConnectedChatConsumer.swift */; };
+		BC0C03000000000000000003 /* BConnectedChatConsumerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C03000000000000000004 /* BConnectedChatConsumerTest.swift */; };
 		BC0C02000000000000000005 /* BConnectedChatTransportTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C02000000000000000006 /* BConnectedChatTransportTest.swift */; };
 		BC0C02000000000000000003 /* BConnectedChatTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C02000000000000000004 /* BConnectedChatTransport.swift */; };
 		BC0C02000000000000000001 /* BConnectedTransportCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C02000000000000000002 /* BConnectedTransportCapabilities.swift */; };
@@ -4266,6 +4268,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0C03000000000000000002 /* BConnectedChatConsumer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedChatConsumer.swift; sourceTree = "<group>"; };
+		BC0C03000000000000000004 /* BConnectedChatConsumerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedChatConsumerTest.swift; sourceTree = "<group>"; };
 		BC0C02000000000000000006 /* BConnectedChatTransportTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedChatTransportTest.swift; sourceTree = "<group>"; };
 		BC0C02000000000000000004 /* BConnectedChatTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedChatTransport.swift; sourceTree = "<group>"; };
 		BC0C02000000000000000002 /* BConnectedTransportCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedTransportCapabilities.swift; sourceTree = "<group>"; };
@@ -14676,6 +14680,7 @@
 				F9B93CDB28E1FE3500B3F8A0 /* SignalProxyTest.swift */,
 				BC0A10000000000000000004 /* BConnectedMediaDownloadTest.swift */,
 				BC0C02000000000000000006 /* BConnectedChatTransportTest.swift */,
+				BC0C03000000000000000004 /* BConnectedChatConsumerTest.swift */,
 				5093A1B02F0B1C0100A03829 /* TSRequestTest.swift */,
 			);
 			name = Network;
@@ -15772,6 +15777,7 @@
 				BC0A10000000000000000002 /* BConnectedMediaDownload.swift */,
 				BC0C02000000000000000002 /* BConnectedTransportCapabilities.swift */,
 				BC0C02000000000000000004 /* BConnectedChatTransport.swift */,
+				BC0C03000000000000000002 /* BConnectedChatConsumer.swift */,
 				F9C5CAF3289453B200548EEE /* OWSURLSessionProtocol.swift */,
 				F9C5CABF289453B200548EEE /* ProxiedContentDownloader.swift */,
 				F9C5CABD289453B200548EEE /* ReachabilityManager.swift */,
@@ -20144,6 +20150,7 @@
 				BC0A10000000000000000001 /* BConnectedMediaDownload.swift in Sources */,
 				BC0C02000000000000000001 /* BConnectedTransportCapabilities.swift in Sources */,
 				BC0C02000000000000000003 /* BConnectedChatTransport.swift in Sources */,
+				BC0C03000000000000000001 /* BConnectedChatConsumer.swift in Sources */,
 				F9C5CDC6289453B400548EEE /* OWSURLSessionProtocol.swift in Sources */,
 				F9C5CDD0289453B400548EEE /* OWSUserProfile.swift in Sources */,
 				F9C5CBCD289453B300548EEE /* OWSVerificationStateChangeMessage+SDS.swift in Sources */,
@@ -20855,6 +20862,7 @@
 				F9426289289B1B5600460798 /* TSOutgoingMessageTest.swift in Sources */,
 				BC0A10000000000000000003 /* BConnectedMediaDownloadTest.swift in Sources */,
 				BC0C02000000000000000005 /* BConnectedChatTransportTest.swift in Sources */,
+				BC0C03000000000000000003 /* BConnectedChatConsumerTest.swift in Sources */,
 				5093A1B12F0B1C0100A03829 /* TSRequestTest.swift in Sources */,
 				F942628F289B1B5600460798 /* TypingIndicatorMessageTest.swift in Sources */,
 				726C94252D6F48DA00ABF9B9 /* UncooperativeTimeoutTest.swift in Sources */,

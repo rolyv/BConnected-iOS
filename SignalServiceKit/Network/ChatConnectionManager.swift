@@ -88,6 +88,7 @@ extension ChatConnectionManager {
 }
 
 public class ChatConnectionManagerImpl: ChatConnectionManager {
+    private let chatConsumer: BConnectedChatConsumer
     private let connectionIdentified: OWSAuthConnectionUsingLibSignal
     private let connectionUnidentified: OWSUnauthConnectionUsingLibSignal
     private var connections: [OWSChatConnection] { [connectionIdentified, connectionUnidentified] }
@@ -114,8 +115,9 @@ public class ChatConnectionManagerImpl: ChatConnectionManager {
         clockSkewManager: ClockSkewManager,
         db: any DB,
         inactivePrimaryDeviceStore: InactivePrimaryDeviceStore,
-        libsignalNet: Net,
+        libsignalNet: any BConnectedChatTransport,
     ) {
+        self.chatConsumer = .init(transport: libsignalNet)
         self.connectionIdentified = OWSAuthConnectionUsingLibSignal(
             libsignalNet: libsignalNet,
             accountManager: accountManager,
@@ -195,8 +197,10 @@ public class ChatConnectionManagerImpl: ChatConnectionManager {
     // MARK: -
 
     public func keyTransparencyClient() async throws -> KeyTransparency.Client {
-        return try await connectionUnidentified.withLibsignalConnection { connection in
-            connection.keyTransparencyClient
+        return try await chatConsumer.withKeyTransparencyClient {
+            try await connectionUnidentified.withLibsignalConnection { connection in
+                connection.keyTransparencyClient
+            }
         }
     }
 
@@ -205,7 +209,8 @@ public class ChatConnectionManagerImpl: ChatConnectionManager {
         _ service: Service,
         do callback: (Service.Api) async throws -> Output,
     ) async throws -> Output where Service: UnauthServiceSelector {
-        try await connectionUnidentified.withLibsignalConnection { connection in
+        try chatConsumer.transport.capabilities.require(.unauthenticatedChat)
+        return try await connectionUnidentified.withLibsignalConnection { connection in
             // This force-cast is guaranteed by UnauthServiceSelector only being provided for valid service protocols.
             try await callback(connection as! Service.Api)
         }
@@ -216,7 +221,8 @@ public class ChatConnectionManagerImpl: ChatConnectionManager {
         _ service: Service,
         do callback: (Service.Api) async throws -> Output,
     ) async throws -> Output where Service: AuthServiceSelector {
-        try await connectionIdentified.withLibsignalConnection { connection in
+        try chatConsumer.transport.capabilities.require(.authenticatedChat)
+        return try await connectionIdentified.withLibsignalConnection { connection in
             // This force-cast is guaranteed by AuthServiceSelector only being provided for valid service protocols.
             try await callback(connection as! Service.Api)
         }

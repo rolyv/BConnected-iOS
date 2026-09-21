@@ -461,7 +461,27 @@ public class OWSChatConnection {
 // MARK: -
 
 class OWSChatConnectionUsingLibSignal<Connection: ChatConnection & Sendable>: OWSChatConnection, ConnectionEventsListener {
-    fileprivate let libsignalNet: Net
+    fileprivate let libsignalNet: any BConnectedChatTransport
+    private var transportFailure = BConnectedChatConnectionFailure()
+
+    fileprivate var chatConsumer: BConnectedChatConsumer { .init(transport: libsignalNet) }
+
+    override fileprivate func _canOpenWebSocketError() -> (any Error)? {
+        assertOnQueue(serialQueue)
+        do {
+            try transportFailure.requireAvailable(
+                capabilities: libsignalNet.capabilities,
+                for: type == .identified ? .authenticatedChat : .unauthenticatedChat
+            )
+        } catch { return error }
+        return super._canOpenWebSocketError()
+    }
+
+    fileprivate func authenticationDidChange(install: () -> Void = {}) {
+        assertOnQueue(serialQueue)
+        transportFailure.authenticationDidChange(install: install)
+        _updateCanOpenWebSocket()
+    }
 
     fileprivate enum ConnectionState {
         case closed(task: Task<Void, Never>?)
@@ -542,7 +562,7 @@ class OWSChatConnectionUsingLibSignal<Connection: ChatConnection & Sendable>: OW
     }
 
     init(
-        libsignalNet: Net,
+        libsignalNet: any BConnectedChatTransport,
         type: OWSChatConnectionType,
         appExpiry: AppExpiry,
         appReadiness: AppReadiness,
@@ -599,12 +619,13 @@ class OWSChatConnectionUsingLibSignal<Connection: ChatConnection & Sendable>: OW
 
         // Unique while live.
         let token = NSObject()
+        let authenticationGeneration = transportFailure.authenticationGeneration
         connection = .connecting(token: token, task: Task { [token] () -> Connection? in
             // We need to wait until the prior connection releases the connection lock
             // before we try to acquire it again. This happens as part of this Task.
             await disconnectTask?.value
 
-            func connectionAttemptCompleted(_ state: ConnectionState) async -> Connection? {
+            func connectionAttemptCompleted(_ state: ConnectionState, terminalFailure: BConnectedTransportError? = nil) async -> Connection? {
                 // We're not done until self.connection has been updated.
                 // (Otherwise, we might try to send requests before calling start(listener:).)
                 return await withCheckedContinuation { continuation in
@@ -616,7 +637,19 @@ class OWSChatConnectionUsingLibSignal<Connection: ChatConnection & Sendable>: OW
                             return
                         }
 
+                        let isTerminal = terminalFailure.map {
+                            self.transportFailure.record($0, forAuthenticationGeneration: authenticationGeneration)
+                        } ?? false
                         self.connection = state
+                        if isTerminal {
+                            // Close first, then publish the fatal error and wake request waiters.
+                            // Never cancel/wait on this same connection task while recording it.
+                            self._updateCanOpenWebSocket()
+                        } else if terminalFailure != nil {
+                            // Credentials changed while the old attempt was failing. Try the new
+                            // credentials instead of retaining the old attempt's failure.
+                            self.reconnectAfterFailure()
+                        }
 
                         if case .open(let connection) = state {
                             continuation.resume(returning: connection)
@@ -641,6 +674,8 @@ class OWSChatConnectionUsingLibSignal<Connection: ChatConnection & Sendable>: OW
                 // (We could even skip updating state, since the disconnect action should have already set it to "closed",
                 // but just in case it's still on "connecting" we'll continue on to execute that cleanup.)
                 return await connectionAttemptCompleted(.closed(task: nil))
+            } catch let error as BConnectedTransportError {
+                return await connectionAttemptCompleted(.closed(task: nil), terminalFailure: error)
             } catch SignalError.appExpired(_) {
                 await appExpiry.setHasAppExpiredAtCurrentVersion(db: db)
             } catch SignalError.deviceDeregistered(_) {
@@ -849,7 +884,7 @@ class OWSChatConnectionUsingLibSignal<Connection: ChatConnection & Sendable>: OW
 
 class OWSUnauthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<UnauthenticatedChatConnection> {
     init(
-        libsignalNet: Net,
+        libsignalNet: any BConnectedChatTransport,
         appExpiry: AppExpiry,
         appReadiness: AppReadiness,
         clockSkewManager: ClockSkewManager,
@@ -874,7 +909,9 @@ class OWSUnauthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<Unauthe
     }
 
     override func connectChatService(token: NSObject) async throws -> UnauthenticatedChatConnection {
-        return try await libsignalNet.connectUnauthenticatedChat(languages: Array(HttpHeaders.topPreferredLanguages()))
+        return try await chatConsumer.connectUnauthenticatedChat {
+            Array(HttpHeaders.topPreferredLanguages())
+        }
     }
 }
 
@@ -909,7 +946,7 @@ class OWSAuthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<Authentic
     private let inactivePrimaryDeviceStore: InactivePrimaryDeviceStore
 
     init(
-        libsignalNet: Net,
+        libsignalNet: any BConnectedChatTransport,
         accountManager: TSAccountManager,
         appContext: any AppContext,
         appExpiry: AppExpiry,
@@ -971,7 +1008,7 @@ class OWSAuthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<Authentic
     private func registrationStateDidChange(_ notification: NSNotification) {
         AssertIsOnMainThread()
 
-        updateCanOpenWebSocket()
+        serialQueue.async { self.authenticationDidChange() }
     }
 
     @objc
@@ -1006,10 +1043,8 @@ class OWSAuthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<Authentic
     func setRegistrationOverride(_ chatServiceAuth: ChatServiceAuth) async {
         await withCheckedContinuation { continuation in
             serialQueue.async {
-                // Set the chatServiceAuth first to ensure it's accessible when
-                // setRegistrationOverride initiates a connection.
-                self.authOverride.set(chatServiceAuth)
-                self._setRegistrationOverride(true)
+                self.registrationOverride = true
+                self.authenticationDidChange { self.authOverride.set(chatServiceAuth) }
                 continuation.resume()
             }
         }
@@ -1034,34 +1069,40 @@ class OWSAuthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<Authentic
         // to wait until it's closed before continuing...
         await waitForDisconnectIfClosed()
 
-        // ...to ensure that we don't clear authOverride in the middle of a
-        // connection attempt.
-        self.authOverride.set(.implicit())
+        // Install implicit credentials and reset the failure generation together before
+        // reopening. A still-running explicit attempt retains its old generation.
+        await withCheckedContinuation { continuation in
+            serialQueue.async {
+                self.authenticationDidChange { self.authOverride.set(.implicit()) }
+                continuation.resume()
+            }
+        }
     }
 
     override fileprivate func connectChatService(token: NSObject) async throws -> AuthenticatedChatConnection {
-        try await self.acquireConnectionLock()
-
-        let username: String?
-        let password: String?
-        switch self.authOverride.get().credentials {
-        case .implicit:
-            (username, password) = db.read { tx in
-                (accountManager.storedServerUsername(tx: tx), accountManager.storedServerAuthToken(tx: tx))
-            }
-        case .explicit(let _username, let _password):
-            username = _username
-            password = _password
-        }
-
-        // Note that we still try to connect for an unregistered user, so that we get a consistent error thrown.
         do {
-            return try await libsignalNet.connectAuthenticatedChat(
-                username: username ?? "",
-                password: password ?? "",
-                receiveStories: StoryManager.areStoriesEnabled,
-                languages: Array(HttpHeaders.topPreferredLanguages()),
-            )
+            return try await chatConsumer.connectAuthenticatedChat {
+                // The consumer checks capability before acquiring the lock or reading credentials.
+                try await self.acquireConnectionLock()
+                let username: String?
+                let password: String?
+                switch self.authOverride.get().credentials {
+                case .implicit:
+                    (username, password) = db.read { tx in
+                        (accountManager.storedServerUsername(tx: tx), accountManager.storedServerAuthToken(tx: tx))
+                    }
+                case .explicit(let _username, let _password):
+                    username = _username
+                    password = _password
+                }
+
+                // Preserve legacy behavior; the owned transport validates missing credentials.
+                return (
+                    username: username ?? "", password: password ?? "",
+                    receiveStories: StoryManager.areStoriesEnabled,
+                    languages: Array(HttpHeaders.topPreferredLanguages())
+                )
+            }
         } catch {
             switch error {
             case SignalError.deviceDeregistered:
