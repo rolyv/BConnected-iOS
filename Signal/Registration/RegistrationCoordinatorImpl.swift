@@ -36,6 +36,13 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
         self.deps = dependencies
     }
 
+    /// Explicit owned enrollment service. The UI still needs its admission/approval stages before
+    /// calling this; creating it neither enables legacy registration nor completes the local account.
+    @MainActor
+    public func makeBConnectedEnrollmentCoordinator(endpoint: BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator {
+        BConnectedEnrollmentCoordinator(db: deps.db, endpoint: endpoint)
+    }
+
     // MARK: - Public API
 
     public func switchToSecondaryDeviceLinking() -> Bool {
@@ -98,9 +105,15 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
             return .appUpdateBanner
         }
 
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        // The upstream restore path can contact legacy session/SVR services. Owned enrollment
+        // must resolve its own durable state before any such effects, including on restart.
+        return .bconnectedEnrollment
+        #else
         // Always start by restoring state.
         await restoreStateIfNeeded()
         return await nextStep(pathway: getPathway())
+        #endif
     }
 
     public func continueFromSplash() -> Guarantee<RegistrationStep> {

@@ -40,3 +40,15 @@ A runnable owned build still requires explicit endpoint/port/trust inputs in the
 python3 -m unittest discover -s Scripts/bconnected -p 'test_*.py'
 python3 Scripts/bconnected/verify_libsignal.py .build/bconnected-libsignal --platform iphonesimulator
 ```
+
+## Durable owned enrollment source
+
+The owned registration coordinator now selects a dedicated BConnected screen before upstream registration-state restoration. Only `BCONNECTED_LEGACY_TRANSPORT` retains the original entry path. The screen reads an explicit `BConnectedEnrollmentOrigin` HTTPS origin; no value is supplied by this change and it never infers a REST origin from the messaging host. Missing configuration cannot construct the network client.
+
+`BConnectedEnrollmentCoordinator.prepare` commits the original phone/password, private ACI/PNI identity and signed EC/KEM records, registration IDs, attempt nonce, public registration JSON and original metadata to a dedicated collection in the preregistration SQLCipher app DB before returning the public community-intent projection. Restarts reuse those bytes. Corruption or persistence failure stops progress, and there is no automatic erasure/replacement path. The community challenge binds once. Approval, phone verification, pending native confirmation and an active server observation remain distinct; none of this code marks the local Signal account registered or returns the navigation `.done` step.
+
+All five enrollment calls use the published `/v1/bconnected/enrollment` contract. Request/response validation rejects duplicate/unknown fields, invalid encodings and mismatched operation/account identity. Native libsignal validates signed public key material. The dedicated ephemeral HTTPS client rejects redirects, cookies and response caching, bounds response bytes and time, and never automatically retries. An SMS dispatch marker is committed before the call; uncertain delivery, cancellation or response-persistence failure retains the marker across restart/status checks. A later resend requires an explicit user decision and still relies on server quotas.
+
+The shared request, 15 invalid mutations and 15 response/error cases are copied verbatim from the personal server fork into `SignalServiceKit/tests/Registration/Resources`. Focused host tests exercise the native cryptography, byte-preserving restarts, failure ordering, actual URLSession with synthetic URLProtocol responses, and the actual app view model with missing configuration. These are not device navigation/lifecycle or SQLCipher crash-durability tests. The actual full app graph separately compiles the production DB adapter and screen.
+
+Next prerequisites are the real community invitation/session/approval-intent UI adapter; an explicit verified REST origin; installing the preserved keys and account identity atomically into native stores only after an authoritative active observation; owned service routing; and the existing complete pilot/Stories/8,000-member acceptance gates. Fresh installs currently show an honest setup-unavailable state rather than a simulated signup. The release guard remains in force.
