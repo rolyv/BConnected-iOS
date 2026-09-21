@@ -30,6 +30,11 @@ protocol ProvisioningSocketManagerUIDelegate: AnyObject {
     func provisioningSocketManagerDidPauseQRRotation(
         _ provisioningSocketManager: ProvisioningSocketManager,
     )
+
+    func provisioningSocketManager(
+        _ provisioningSocketManager: ProvisioningSocketManager,
+        didFailWithTransportError error: BConnectedTransportError,
+    )
 }
 
 class ProvisioningSocketManager: ProvisioningConnectionListener {
@@ -70,8 +75,18 @@ class ProvisioningSocketManager: ProvisioningConnectionListener {
     var delegate: ProvisioningSocketManagerUIDelegate?
 
     private let linkType: DeviceProvisioningURL.LinkType
-    init(linkType: DeviceProvisioningURL.LinkType) {
+    private let provisioningConsumer: BConnectedProvisioningConsumer
+    // Read/write only while holding awaitProvisionEnvelopeContinuation's update lock.
+    // Immutable transport-policy failures remain terminal for this manager instance.
+    private var terminalTransportError: BConnectedTransportError?
+
+    convenience init(linkType: DeviceProvisioningURL.LinkType) {
+        self.init(linkType: linkType, chatTransport: DependenciesBridge.shared.libsignalNet)
+    }
+
+    init(linkType: DeviceProvisioningURL.LinkType, chatTransport: any BConnectedChatTransport) {
         self.linkType = linkType
+        self.provisioningConsumer = .init(transport: chatTransport)
     }
 
     // Start:
@@ -222,12 +237,12 @@ class ProvisioningSocketManager: ProvisioningConnectionListener {
     /// A provisioning URL containing information about the now-opened
     /// provisioning socket.
     func openNewProvisioningSocket() async throws -> URL {
-        let libsignalNet = DependenciesBridge.shared.libsignalNet
-
-        let ourKeyPair = IdentityKeyPair.generate()
-        let cipher = ProvisioningCipher(ourKeyPair: ourKeyPair)
-
-        let socket = try await libsignalNet.connectProvisioning()
+        let connected = try await provisioningConsumer.connect {
+            let keyPair = IdentityKeyPair.generate()
+            return (keyPair, ProvisioningCipher(ourKeyPair: keyPair))
+        }
+        let (ourKeyPair, cipher) = connected.prepared
+        let socket = connected.connection
 
         let provisioningAddress: String = try await withCheckedThrowingContinuation { continuation in
             let newAttempt = ProvisioningCommunicationAttempt(
@@ -251,6 +266,10 @@ class ProvisioningSocketManager: ProvisioningConnectionListener {
     func waitForMessageData<Envelope: ProvisioningEnvelope>(_ envelopeType: Envelope.Type) async throws -> Data {
         let decryptableProvisionEnvelope: DecryptableProvisionEnvelope = try await withCheckedThrowingContinuation { newContinuation in
             awaitProvisionEnvelopeContinuation.update { existingContinuation in
+                if let terminalTransportError = self.terminalTransportError {
+                    newContinuation.resume(throwing: terminalTransportError)
+                    return
+                }
                 guard existingContinuation == nil else {
                     newContinuation.resume(throwing: OWSAssertionError("Attempted to await provisioning multiple times!"))
                     return
@@ -290,8 +309,17 @@ class ProvisioningSocketManager: ProvisioningConnectionListener {
                 // We've been canceled; bail! It's the canceler's responsibility
                 // to make sure the UI is updated.
                 return
+            } catch let error as BConnectedTransportError {
+                guard !Task.isCancelled else { return }
+                // Capability/configuration errors cannot recover through automatic QR rotation.
+                self.awaitProvisionEnvelopeContinuation.update { existingContinuation in
+                    self.terminalTransportError = error
+                    existingContinuation?.resume(throwing: error)
+                    existingContinuation = nil
+                }
+                await delegate?.provisioningSocketManager(self, didFailWithTransportError: error)
             } catch {
-                // Fall through as if we'd exhausted our rotations.
+                await delegate?.provisioningSocketManagerDidPauseQRRotation(self)
             }
         }
     }

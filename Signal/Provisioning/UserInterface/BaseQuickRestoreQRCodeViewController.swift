@@ -80,6 +80,14 @@ class BaseQuickRestoreQRCodeViewController:
         self.model.updateURLDisplayMode(.loaded(url))
     }
 
+    func provisioningSocketManager(
+        _ provisioningSocketManager: ProvisioningSocketManager,
+        didFailWithTransportError error: BConnectedTransportError,
+    ) {
+        model.updateURLDisplayMode(.refreshButton)
+        presentToast(text: "Device setup is unavailable with the current connection settings.")
+    }
+
     func provisioningSocketManagerDidPauseQRRotation(_ provisioningSocketManager: ProvisioningSocketManager) {
         self.model.updateURLDisplayMode(.refreshButton)
     }

@@ -73,6 +73,14 @@ class ProvisioningQRCodeViewController: ProvisioningBaseViewController, Provisio
         provisioningQRCodeViewModel.updateURLDisplayMode(.loaded(url))
     }
 
+    func provisioningSocketManager(
+        _ provisioningSocketManager: ProvisioningSocketManager,
+        didFailWithTransportError error: BConnectedTransportError,
+    ) {
+        provisioningQRCodeViewModel.updateURLDisplayMode(.refreshButton)
+        presentToast(text: "Device setup is unavailable with the current connection settings.")
+    }
+
     func provisioningSocketManagerDidPauseQRRotation(_ provisioningSocketManager: ProvisioningSocketManager) {
         provisioningQRCodeViewModel.updateURLDisplayMode(.refreshButton)
     }
