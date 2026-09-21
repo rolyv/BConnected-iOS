@@ -38,3 +38,12 @@ protocol UploadEndpoint {
 extension Upload {
     typealias Endpoint = UploadEndpoint
 }
+
+// Preserve capability denials through the upload protocol's typed-error boundary.
+extension OWSSignalServiceProtocol {
+    func uploadUrlSessionForCdn(cdnNumber: UInt32) async throws(Upload.Error) -> OWSURLSessionProtocol {
+        do { return try await sharedUrlSessionForCdn(cdnNumber: cdnNumber) }
+        catch let error as BConnectedTransportError { throw .transportUnavailable(error) }
+        catch { throw .unknown }
+    }
+}

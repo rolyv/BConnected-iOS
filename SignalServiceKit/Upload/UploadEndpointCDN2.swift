@@ -40,7 +40,7 @@ struct UploadEndpointCDN2: UploadEndpoint {
             logger.info("attemptCount: \(attemptCount)")
         }
 
-        let urlSession = await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
+        let urlSession = try await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
         let urlString = uploadForm.signedUploadLocation
         guard urlString.lowercased().hasPrefix("http") else {
             throw OWSAssertionError("Invalid signedUploadLocation.")
@@ -92,7 +92,7 @@ struct UploadEndpointCDN2: UploadEndpoint {
         headers["Content-Length"] = "0"
         headers["Content-Range"] = "bytes */\(attempt.encryptedDataLength)"
 
-        let urlSession = await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
+        let urlSession = try await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
         let response = try await urlSession.performRequest(
             attempt.uploadLocation.absoluteString,
             method: .put,
@@ -149,6 +149,7 @@ struct UploadEndpointCDN2: UploadEndpoint {
         attempt: Upload.Attempt<Metadata>,
         progressBlock: OWSURLSession.ProgressBlock,
     ) async throws(Upload.Error) {
+        let urlSession = try await signalService.uploadUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
         let totalDataLength = attempt.encryptedDataLength
         var headers = HttpHeaders()
 
@@ -174,7 +175,6 @@ struct UploadEndpointCDN2: UploadEndpoint {
         }
 
         do {
-            let urlSession = await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
             let response = try await urlSession.performUpload(
                 attempt.uploadLocation.absoluteString,
                 method: .put,

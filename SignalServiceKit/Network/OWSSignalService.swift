@@ -12,7 +12,9 @@ extension Notification.Name {
 
 public class OWSSignalService: OWSSignalServiceProtocol {
     private let keyValueStore = KeyValueStore(collection: "kTSStorageManager_OWSSignalService")
-    private let libsignalNet: Net?
+    private let libsignalNet: (any BConnectedChatTransport)?
+    private let urlSessionPolicy: BConnectedURLSessionPolicy
+    @Atomic public private(set) var frontingConfigurationError: BConnectedTransportError?
 
     @Atomic public private(set) var isCensorshipCircumventionActive: Bool = false {
         didSet {
@@ -21,7 +23,19 @@ public class OWSSignalService: OWSSignalServiceProtocol {
             }
 
             // Update libsignal's Net instance first, so that connections can be recreated by notification observers.
-            libsignalNet?.setCensorshipCircumventionEnabled(isCensorshipCircumventionActive)
+            do {
+                try urlSessionPolicy.updateNativeFronting(enabled: isCensorshipCircumventionActive) { enabled in
+                    guard let libsignalNet else { return } // Explicit no-network test injection.
+                    guard let legacyNet = libsignalNet as? Net else {
+                        throw BConnectedTransportError.invalidOwnedConfiguration
+                    }
+                    legacyNet.setCensorshipCircumventionEnabled(enabled)
+                }
+                frontingConfigurationError = nil
+            } catch {
+                frontingConfigurationError = (error as? BConnectedTransportError) ?? .invalidOwnedConfiguration
+                Logger.warn("Domain fronting is unavailable for the selected chat transport.")
+            }
 
             NotificationCenter.default.postOnMainThread(
                 name: .isCensorshipCircumventionActiveDidChange,
@@ -109,8 +123,9 @@ public class OWSSignalService: OWSSignalServiceProtocol {
     // Returns nil if CC not active
     private func censorshipConfigurationParamsWithMaybeSneakyTransaction(
         censorshipCircumventionSupportedForService: Bool,
+        capturedFrontingRequested: Bool? = nil,
     ) -> CensorshipConfigurationParams? {
-        guard self.isCensorshipCircumventionActive, censorshipCircumventionSupportedForService else {
+        guard capturedFrontingRequested ?? self.isCensorshipCircumventionActive, censorshipCircumventionSupportedForService else {
             return nil
         }
         if self.isCensorshipCircumventionManuallyActivated {
@@ -234,12 +249,12 @@ public class OWSSignalService: OWSSignalServiceProtocol {
 
         func getOrBuildSession(
             key: Key,
-            buildFn: () -> OWSURLSessionProtocol,
-        ) -> OWSURLSessionProtocol {
+            buildFn: () throws -> OWSURLSessionProtocol,
+        ) throws -> OWSURLSessionProtocol {
             if let cached = cache[key] {
                 return cached
             }
-            let session = buildFn()
+            let session = try buildFn()
             cache[key] = session
             return session
         }
@@ -255,12 +270,24 @@ public class OWSSignalService: OWSSignalServiceProtocol {
 
     private let cdnSessionCache = CDNSessionCache()
 
-    public func sharedUrlSessionForCdn(cdnNumber: UInt32) async -> OWSURLSessionProtocol {
+    public func sharedUrlSessionForCdn(cdnNumber: UInt32) async throws -> OWSURLSessionProtocol {
+        return try await urlSessionPolicy.withCdnSession(
+            cdnNumber: cdnNumber, frontingRequested: { self.isCensorshipCircumventionActive }
+        ) { frontingRequested in
+            try await self.buildPermittedCdnSession(cdnNumber: cdnNumber, frontingRequested: frontingRequested)
+        }
+    }
+
+    private func buildPermittedCdnSession(cdnNumber: UInt32, frontingRequested: Bool) async throws -> OWSURLSessionProtocol {
         let ccParams = self.censorshipConfigurationParamsWithMaybeSneakyTransaction(
             censorshipCircumventionSupportedForService: true,
+            capturedFrontingRequested: frontingRequested,
         )
+        // Use the policy-checked snapshot and validate the resulting configuration before
+        // touching the session cache or constructing a URL.
+        try urlSessionPolicy.requireFrontingIfRequested(ccParams != nil)
         let cacheKey = CDNSessionCache.Key(cdnNumber: cdnNumber, ccParams: ccParams)
-        return await cdnSessionCache.getOrBuildSession(
+        return try await cdnSessionCache.getOrBuildSession(
             key: cacheKey,
             buildFn: {
                 let urlSessionConfiguration = OWSURLSession.defaultConfigurationWithoutCaching
@@ -279,10 +306,9 @@ public class OWSSignalService: OWSSignalServiceProtocol {
                     baseUrl = URL(string: TSConstants.textSecureCDN3ServerURL)!
                     censorshipCircumventionPathPrefix = TSConstants.cdn3CensorshipPrefix
                 default:
-                    owsFailDebug("Unrecognized CDN number configuration requested: \(cdnNumber)")
-                    // Fallback to cdn2
-                    baseUrl = URL(string: TSConstants.textSecureCDN2ServerURL)!
-                    censorshipCircumventionPathPrefix = TSConstants.cdn2CensorshipPrefix
+                    // Already rejected by the public policy boundary; keep this lower
+                    // construction boundary fail-closed as well.
+                    throw BConnectedTransportError.invalidOwnedConfiguration
                 }
 
                 return self.buildUrlSession(
@@ -316,8 +342,9 @@ public class OWSSignalService: OWSSignalServiceProtocol {
 
     // MARK: - Internal Implementation
 
-    public init(libsignalNet: Net?) {
+    public init(libsignalNet: (any BConnectedChatTransport)?) {
         self.libsignalNet = libsignalNet
+        self.urlSessionPolicy = .init(capabilities: libsignalNet?.capabilities ?? .legacy)
         observeNotifications()
     }
 

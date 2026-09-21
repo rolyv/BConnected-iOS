@@ -348,7 +348,7 @@ private extension Error {
             .uploadFailure(recovery: .restart),
             .uploadFailure(recovery: .resume):
             return true
-        case .uploadFailure(recovery: .noMoreRetries):
+        case .uploadFailure(recovery: .noMoreRetries), .transportUnavailable:
             return false
         case .invalidUploadURL, .unsupportedEndpoint, .unexpectedResponseStatusCode, .missingFile, .unknown:
             return false

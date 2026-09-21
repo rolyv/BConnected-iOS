@@ -41,7 +41,7 @@ struct UploadEndpointCDN3: UploadEndpoint {
         var headers = uploadForm.headers
         headers["Tus-Resumable"] = "1.0.0"
 
-        let urlSession = await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
+        let urlSession = try await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
 
         let response: HTTPResponse
         do {
@@ -87,7 +87,7 @@ struct UploadEndpointCDN3: UploadEndpoint {
         attempt: Upload.Attempt<Metadata>,
         progressBlock: OWSURLSession.ProgressBlock,
     ) async throws(Upload.Error) {
-        let urlSession = await signalService.sharedUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
+        let urlSession = try await signalService.uploadUrlSessionForCdn(cdnNumber: uploadForm.cdnNumber)
         let totalDataLength = attempt.encryptedDataLength
         var headers = uploadForm.headers
 

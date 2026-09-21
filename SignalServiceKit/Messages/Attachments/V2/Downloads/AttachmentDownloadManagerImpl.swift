@@ -1800,7 +1800,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                     maxResponseSize: maxDownloadSizeBytes, ignoreAppExpiry: true)
                 return (try AttachmentDownloads.CdnInfo(response.headers), response.responseBodyData)
             }
-            let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
+            let urlSession = try await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
             var headers = downloadState.additionalHeaders()
             headers["Content-Type"] = MimeType.applicationOctetStream.rawValue
             headers["range"] = "bytes=0-\(length - 1)"
@@ -1855,7 +1855,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                             maxResponseSize: maxDownloadSizeBytes, progressBlock: $0)
                     }
                 } else if let resumeData {
-                    let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
+                    let urlSession = try await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
                     let request = try urlSession.endpoint.buildRequest(urlPath, method: .get, headers: headers)
                     guard let requestUrl = request.url else {
                         throw OWSAssertionError("Request missing url.")
@@ -1869,7 +1869,7 @@ public class AttachmentDownloadManagerImpl: AttachmentDownloadManager {
                         )
                     }
                 } else {
-                    let urlSession = await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
+                    let urlSession = try await self.signalService.sharedUrlSessionForCdn(cdnNumber: downloadState.cdnNumber())
                     downloadOperation = {
                         return try await urlSession.performDownload(
                             urlPath,

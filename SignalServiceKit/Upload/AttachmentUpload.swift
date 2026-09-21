@@ -208,6 +208,9 @@ public enum AttachmentUpload {
                 }
             case .networkError:
                 failureMode = .resume(.afterBackoff)
+            case .transportUnavailable:
+                // Capability failures cannot recover by fetching a new form or retrying.
+                failureMode = .noMoreRetries
             case .missingFile:
                 attempt.logger.error("Missing attachment file!")
                 failureMode = .noMoreRetries

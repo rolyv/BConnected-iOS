@@ -49,15 +49,17 @@ public class OWSSignalServiceMock: OWSSignalServiceProtocol {
 
     public var mockCDNUrlSessionBuilder: ((_ cdnNumber: UInt32) -> BaseOWSURLSessionMock)?
 
-    public func sharedUrlSessionForCdn(cdnNumber: UInt32) async -> OWSURLSessionProtocol {
+    public func sharedUrlSessionForCdn(cdnNumber: UInt32) async throws -> OWSURLSessionProtocol {
         let baseUrl: URL
         switch cdnNumber {
         case 0:
             baseUrl = URL(string: TSConstants.textSecureCDN0ServerURL)!
         case 3:
             baseUrl = URL(string: TSConstants.textSecureCDN3ServerURL)!
-        default:
+        case 2:
             baseUrl = URL(string: TSConstants.textSecureCDN2ServerURL)!
+        default:
+            throw BConnectedTransportError.invalidOwnedConfiguration
         }
 
         return mockCDNUrlSessionBuilder?(cdnNumber) ?? BaseOWSURLSessionMock(

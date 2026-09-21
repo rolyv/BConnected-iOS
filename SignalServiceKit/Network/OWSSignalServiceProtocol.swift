@@ -26,7 +26,7 @@ public protocol OWSSignalServiceProtocol: AnyObject {
         configuration: URLSessionConfiguration?,
     ) -> OWSURLSessionProtocol
 
-    func sharedUrlSessionForCdn(cdnNumber: UInt32) async -> OWSURLSessionProtocol
+    func sharedUrlSessionForCdn(cdnNumber: UInt32) async throws -> OWSURLSessionProtocol
 }
 
 public enum SignalServiceType {

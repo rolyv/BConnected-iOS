@@ -16,6 +16,7 @@ public enum BConnectedTransportCapability: String, CaseIterable, Sendable {
     case nativeNetworkRemoteConfig
     case storageService
     case updates
+    case legacyCdn
     case cdn3
     case calls
     case captcha

@@ -83,6 +83,7 @@ public enum Upload {
         case uploadFailure(recovery: FailureMode)
         case partialUpload(bytesUploaded: UInt64)
         case unsupportedEndpoint
+        case transportUnavailable(BConnectedTransportError)
         case unexpectedResponseStatusCode(Int)
         case missingFile
         case unknown
@@ -92,6 +93,9 @@ public enum Upload {
         }
 
         public var localizedDescription: String {
+            if case .transportUnavailable = self {
+                return "This upload service is unavailable for the selected chat transport."
+            }
             return OWSLocalizedString(
                 "ERROR_MESSAGE_ATTACHMENT_UPLOAD_FAILED",
                 comment: "Error message indicating that attachment upload(s) failed.",
