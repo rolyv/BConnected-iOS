@@ -18,4 +18,4 @@ backup-tests-setup:
 
 .PHONY: fetch-ringrtc
 fetch-ringrtc:
-	$(CURDIR)/Pods/SignalRingRTC/bin/set-up-for-cocoapods
+	"$(CURDIR)/Pods/SignalRingRTC/bin/set-up-for-cocoapods"

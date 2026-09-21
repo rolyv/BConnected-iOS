@@ -43,3 +43,6 @@ debuglogs/
 /.vscode
 
 fastlane/Preview.html
+
+# Source-pinned personal libsignal staging and local build tools
+/.build/

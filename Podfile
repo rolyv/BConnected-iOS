@@ -11,9 +11,8 @@ source 'https://cdn.cocoapods.org/'
 pod 'blurhash', podspec: './ThirdParty/blurhash.podspec'
 pod 'SwiftProtobuf', "1.38.1"
 
-ENV['LIBSIGNAL_FFI_PREBUILD_CHECKSUM'] = '92f7a00931e637627a8c780bd5465c290b26066c23b5430f8d9ca5dbf40b81d6'
-pod 'LibSignalClient', git: 'https://github.com/signalapp/libsignal.git', tag: 'v0.102.3', testspecs: ["Tests"]
-# pod 'LibSignalClient', path: '../libsignal', testspecs: ["Tests"]
+# Run python3 Scripts/bconnected/prepare_libsignal.py first. Missing artifacts fail closed.
+pod 'LibSignalClient', path: '.build/bconnected-libsignal'
 
 ENV['RINGRTC_PREBUILD_CHECKSUM'] = 'dc1826c6d1f0faf3dbdc380ff7b57f4858f245bc731fd876d023ed66e9f628e4'
 # ENV['RINGRTC_USE_FILE_BASED_CAMERA'] = '1'
@@ -244,7 +243,7 @@ def fix_ringrtc_project_symlink(installer)
 end
 
 def fetch_ringrtc
-  `make fetch-ringrtc`
+  system('make', 'fetch-ringrtc', exception: true)
 end
 
 def copy_acknowledgements

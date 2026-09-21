@@ -4,7 +4,7 @@
 //
 
 public import Foundation
-public import LibSignalClient
+import LibSignalClient
 
 extension Notification.Name {
     public static let isCensorshipCircumventionActiveDidChange = Notification.Name("NSNotificationNameIsCensorshipCircumventionActiveDidChange")

@@ -3,11 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-// BConnected: the modern libsignal transport still targets Signal-owned services.
-// Keep the full messenger build disabled until custom endpoints, trust roots,
-// and server-side alumni admission are implemented and verified.
-// The independent BConnectedPilot target builds without this module.
-#if !BCONNECTED_MESSAGING_CONFIGURED
+// Normal messenger builds remain blocked until the owned backend is integrated and verified.
+// The compile-only path cannot create a runnable application or a device/archive build.
+#if BCONNECTED_COMPILE_VALIDATION
+#if !DEBUG || !targetEnvironment(simulator) || !BCONNECTED_OWNED_LIBSIGNAL || BCONNECTED_MESSAGING_CONFIGURED || BCONNECTED_LEGACY_TRANSPORT
+#error("BConnected compile validation requires owned libsignal and an unconfigured Debug simulator build.")
+#endif
+#elseif !BCONNECTED_MESSAGING_CONFIGURED
 #error("BConnected messaging backend is not configured. Build BConnectedPilot/BConnectedPilot.xcodeproj for the approval and directory pilot.")
 #endif
 

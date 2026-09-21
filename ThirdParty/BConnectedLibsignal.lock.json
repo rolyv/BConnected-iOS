@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/rolyv/BConnected-libsignal.git",
+  "revision": "77fb5f4f9e983ab66911eeadb4845e121b72597e",
+  "sourceHashes": {
+    "Cargo.lock": "61bf69ecedb1ec354df48d4d6747620488ae9be34e1cbe1474740bc7d3925d33",
+    "swift/Sources/SignalFfi/signal_ffi.h": "35ae115671c76a2789ba7e437bb513c7d7525b1cba7ddb0dbf275e439d05f5d3",
+    "swift/Sources/LibSignalClient/ChatOnlyNet.swift": "0634827c0ceb44a6cab4749da3b584e415756ea43471385fa066ab86fe7b0d5c"
+  },
+  "features": {
+    "iphonesimulator": [
+      "log/release_max_level_info",
+      "libsignal-bridge-testing"
+    ],
+    "iphoneos": [
+      "log/release_max_level_info"
+    ]
+  },
+  "targets": {
+    "iphonesimulator": "aarch64-apple-ios-sim",
+    "iphoneos": "aarch64-apple-ios"
+  },
+  "deploymentTarget": "15.0",
+  "swiftSourceTreeSha256": "33af1ea645ccfb339db1df8efeb44e927fa881f0a3e498abff025d323ac866fe"
+}

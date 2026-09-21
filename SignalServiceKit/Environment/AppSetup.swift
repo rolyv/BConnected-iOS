@@ -11,7 +11,11 @@ import SDWebImageWebPCoder
 public class AppSetup {
     private let backgroundTask: OWSBackgroundTask
     public init() {
+        #if BCONNECTED_COMPILE_VALIDATION
+        fatalError("This BConnected artifact only validates compilation; startup is disabled.")
+        #else
         self.backgroundTask = OWSBackgroundTask(label: #function)
+        #endif
     }
 }
 

@@ -4,7 +4,7 @@
 //
 
 import Foundation
-public import LibSignalClient
+import LibSignalClient
 
 public protocol NetworkManagerProtocol {
     func asyncRequestImpl(

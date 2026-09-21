@@ -35,6 +35,11 @@ private func uncaughtExceptionHandler(_ exception: NSException) {
 
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
+    #if BCONNECTED_COMPILE_VALIDATION
+    static func main() {
+        fatalError("This BConnected artifact only validates compilation; startup is disabled.")
+    }
+    #endif
 
     // MARK: - Constants
 

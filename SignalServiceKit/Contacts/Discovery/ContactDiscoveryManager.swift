@@ -4,7 +4,7 @@
 //
 
 import Foundation
-public import LibSignalClient
+import LibSignalClient
 
 /// A ContactDiscoveryManager coordinates CDS lookup requests.
 ///
