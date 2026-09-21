@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0C07000000000000000003 /* BConnectedUpdatesFactoryTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C07000000000000000004 /* BConnectedUpdatesFactoryTest.swift */; };
 		BC0C06000000000000000001 /* BConnectedProvisioningConsumer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C06000000000000000002 /* BConnectedProvisioningConsumer.swift */; };
 		BC0C06000000000000000003 /* BConnectedProvisioningConsumerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C06000000000000000004 /* BConnectedProvisioningConsumerTest.swift */; };
 		BC0C05000000000000000001 /* BConnectedURLSessionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C05000000000000000002 /* BConnectedURLSessionPolicy.swift */; };
@@ -4274,6 +4275,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0C07000000000000000004 /* BConnectedUpdatesFactoryTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedUpdatesFactoryTest.swift; sourceTree = "<group>"; };
 		BC0C06000000000000000002 /* BConnectedProvisioningConsumer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedProvisioningConsumer.swift; sourceTree = "<group>"; };
 		BC0C06000000000000000004 /* BConnectedProvisioningConsumerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedProvisioningConsumerTest.swift; sourceTree = "<group>"; };
 		BC0C05000000000000000002 /* BConnectedURLSessionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedURLSessionPolicy.swift; sourceTree = "<group>"; };
@@ -14696,6 +14698,7 @@
 				BC0C04000000000000000004 /* BConnectedNetworkConfigurationTest.swift */,
 				BC0C05000000000000000004 /* BConnectedURLSessionPolicyTest.swift */,
 				BC0C06000000000000000004 /* BConnectedProvisioningConsumerTest.swift */,
+				BC0C07000000000000000004 /* BConnectedUpdatesFactoryTest.swift */,
 				5093A1B02F0B1C0100A03829 /* TSRequestTest.swift */,
 			);
 			name = Network;
@@ -20887,6 +20890,7 @@
 				BC0C04000000000000000003 /* BConnectedNetworkConfigurationTest.swift in Sources */,
 				BC0C05000000000000000003 /* BConnectedURLSessionPolicyTest.swift in Sources */,
 				BC0C06000000000000000003 /* BConnectedProvisioningConsumerTest.swift in Sources */,
+				BC0C07000000000000000003 /* BConnectedUpdatesFactoryTest.swift in Sources */,
 				5093A1B12F0B1C0100A03829 /* TSRequestTest.swift in Sources */,
 				F942628F289B1B5600460798 /* TypingIndicatorMessageTest.swift in Sources */,
 				726C94252D6F48DA00ABF9B9 /* UncooperativeTimeoutTest.swift in Sources */,

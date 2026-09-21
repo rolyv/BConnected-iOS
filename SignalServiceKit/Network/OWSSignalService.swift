@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import Foundation
+public import Foundation
 public import LibSignalClient
 
 extension Notification.Name {
@@ -14,6 +14,7 @@ public class OWSSignalService: OWSSignalServiceProtocol {
     private let keyValueStore = KeyValueStore(collection: "kTSStorageManager_OWSSignalService")
     private let libsignalNet: (any BConnectedChatTransport)?
     private let urlSessionPolicy: BConnectedURLSessionPolicy
+    public var transportCapabilities: BConnectedTransportCapabilities { urlSessionPolicy.capabilities }
     @Atomic public private(set) var frontingConfigurationError: BConnectedTransportError?
 
     @Atomic public private(set) var isCensorshipCircumventionActive: Bool = false {

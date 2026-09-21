@@ -33,8 +33,8 @@ class RemoteReleaseNotesService: RemoteReleaseNotesServiceProtocol {
         self.signalService = signalService
     }
 
-    func getUrlSession() -> OWSURLSessionProtocol {
-        signalService.urlSessionForUpdates2()
+    func getUrlSession() throws -> OWSURLSessionProtocol {
+        try signalService.urlSessionForUpdates2()
     }
 
     func fetchManifests() async throws -> ([RemoteMegaphoneModel.Manifest], [RemoteAnnouncementModel.Manifest]) {

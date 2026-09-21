@@ -136,7 +136,7 @@ public struct BadgeAssetsFetcher {
         guard !OWSFileSystem.fileOrFolderExists(url: spriteUrl) else { return }
 
         // TODO: Badges — Censorship circumvention
-        let urlSession = SSKEnvironment.shared.signalServiceRef.urlSessionForUpdates2()
+        let urlSession = try SSKEnvironment.shared.signalServiceRef.urlSessionForUpdates2()
         let result = try await urlSession.performDownload(remoteSourceUrl.absoluteString, method: .get, maxResponseSize: .max)
         let resultUrl = result.downloadUrl
         guard OWSFileSystem.fileOrFolderExists(url: resultUrl) else {

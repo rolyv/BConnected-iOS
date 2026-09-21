@@ -413,7 +413,7 @@ public class SystemStoryManager: SystemStoryManagerProtocol {
             return
         }
 
-        let urlSession = SSKEnvironment.shared.signalServiceRef.urlSessionForUpdates2()
+        let urlSession = try SSKEnvironment.shared.signalServiceRef.urlSessionForUpdates2()
         let fileNames = try await fetchFilenames(urlSession: urlSession)
         var attachmentSources = [AttachmentDataSource]()
         for fileName in fileNames {

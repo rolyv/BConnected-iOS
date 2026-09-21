@@ -3,10 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import Foundation
+public import Foundation
 
 public protocol OWSSignalServiceProtocol: AnyObject {
     func warmCaches()
+
+    /// Immutable runtime policy. Remote configuration may not add transport services.
+    var transportCapabilities: BConnectedTransportCapabilities { get }
 
     // MARK: - Censorship Circumvention
 
@@ -61,12 +64,16 @@ public extension OWSSignalServiceProtocol {
         buildUrlSession(for: .storageService)
     }
 
-    func urlSessionForUpdates() -> OWSURLSessionProtocol {
-        buildUrlSession(for: .updates)
+    func urlSessionForUpdates() throws -> OWSURLSessionProtocol {
+        try transportCapabilities.perform(requiring: .updates) {
+            buildUrlSession(for: .updates)
+        }
     }
 
-    func urlSessionForUpdates2() -> OWSURLSessionProtocol {
-        buildUrlSession(for: .updates2)
+    func urlSessionForUpdates2() throws -> OWSURLSessionProtocol {
+        try transportCapabilities.perform(requiring: .updates) {
+            buildUrlSession(for: .updates2)
+        }
     }
 }
 

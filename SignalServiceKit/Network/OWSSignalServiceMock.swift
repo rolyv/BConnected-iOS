@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //
 
-import Foundation
+public import Foundation
 
 #if TESTABLE_BUILD
 
 public class OWSSignalServiceMock: OWSSignalServiceProtocol {
     public func warmCaches() {}
+
+    public var transportCapabilities: BConnectedTransportCapabilities = .legacy
 
     public var isCensorshipCircumventionActive: Bool = false
 
