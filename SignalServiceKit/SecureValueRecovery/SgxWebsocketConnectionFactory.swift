@@ -9,6 +9,7 @@ import LibSignalClient
 // MARK: -
 
 public protocol SgxWebsocketConnectionFactory {
+    var transportCapabilities: BConnectedTransportCapabilities { get }
 
     /// Connect to an SgxClient-conformant server via websocket and perform the initial handshake.
     ///
@@ -26,14 +27,17 @@ public protocol SgxWebsocketConnectionFactory {
 final class SgxWebsocketConnectionFactoryImpl: SgxWebsocketConnectionFactory {
 
     private let websocketFactory: WebSocketFactory
+    let transportCapabilities: BConnectedTransportCapabilities
 
-    init(websocketFactory: WebSocketFactory) {
+    init(websocketFactory: WebSocketFactory, transportCapabilities: BConnectedTransportCapabilities) {
         self.websocketFactory = websocketFactory
+        self.transportCapabilities = transportCapabilities
     }
 
     func connectAndPerformHandshake<Configurator: SgxWebsocketConfigurator>(
         configurator: Configurator,
     ) async throws -> SgxWebsocketConnection<Configurator> {
+        try transportCapabilities.require(Configurator.signalServiceType.requiredHTTPCapability)
         let websocketFactory = self.websocketFactory
         let auth = try await configurator.fetchAuth()
         return try await SgxWebsocketConnectionImpl<Configurator>.connectAndPerformHandshake(

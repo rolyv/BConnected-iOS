@@ -47,6 +47,7 @@ public class SecureValueRecovery2Impl: SecureValueRecovery {
     // MARK: - Periodic Backups
 
     public func refreshCredentialsIfNecessary() async throws {
+        try connectionFactory.transportCapabilities.require(.secureValueRecovery)
         let shouldBeBackedUp = self.db.read { tx in self.twoFAManager.shouldMasterKeyBeBackedUp(tx: tx) }
         guard shouldBeBackedUp else {
             // If we've never backed up, don't refresh periodically. (If we eventually
@@ -635,6 +636,7 @@ public class SecureValueRecovery2Impl: SecureValueRecovery {
     private let connectionQueue = ConcurrentTaskQueue(concurrentLimit: 1)
 
     private func makeHandshakeAndOpenConnection(_ config: SVR2WebsocketConfigurator) async throws -> SgxWebsocketConnection<SVR2WebsocketConfigurator> {
+        try connectionFactory.transportCapabilities.require(.secureValueRecovery)
         // Update the auth method with cached credentials if we have them.
         switch config.authMethod {
         case .svrAuth, .chatServerAuth:

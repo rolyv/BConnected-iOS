@@ -466,7 +466,7 @@ extension AppSetup.GlobalsContinuation {
 
         let remoteAttestationAuthFetcher = RemoteAttestationAuthFetcher(networkManager: networkManager)
         let svr = SecureValueRecovery2Impl(
-            connectionFactory: SgxWebsocketConnectionFactoryImpl(websocketFactory: webSocketFactory),
+            connectionFactory: SgxWebsocketConnectionFactoryImpl(websocketFactory: webSocketFactory, transportCapabilities: libsignalNet.capabilities),
             credentialManager: svrAuthCredentialManager,
             db: db,
             accountKeyStore: accountKeyStore,

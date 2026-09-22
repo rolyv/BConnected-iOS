@@ -147,15 +147,19 @@ public class OWSSignalService: OWSSignalServiceProtocol {
         return CensorshipConfigurationParams(countryId: .localE164(localNumber))
     }
 
-    public func buildUrlEndpoint(for signalServiceInfo: SignalServiceInfo) -> OWSURLSessionEndpoint {
-        return buildUrlEndpoint(
-            censorshipConfigurationParams: self.censorshipConfigurationParamsWithMaybeSneakyTransaction(
-                censorshipCircumventionSupportedForService: signalServiceInfo.censorshipCircumventionSupported,
-            ),
-            baseUrl: signalServiceInfo.baseUrl,
-            censorshipCircumventionPathPrefix: signalServiceInfo.censorshipCircumventionPathPrefix,
-            shouldUseSignalCertificate: signalServiceInfo.shouldUseSignalCertificate,
-        )
+    public func buildUrlEndpoint(for signalServiceInfo: SignalServiceInfo) throws -> OWSURLSessionEndpoint {
+        try urlSessionPolicy.withServiceSession(requiring: signalServiceInfo.type.requiredHTTPCapability,
+                                               frontingRequested: { self.isCensorshipCircumventionActive }) { requested in
+            buildUrlEndpoint(
+                censorshipConfigurationParams: self.censorshipConfigurationParamsWithMaybeSneakyTransaction(
+                    censorshipCircumventionSupportedForService: signalServiceInfo.censorshipCircumventionSupported,
+                    capturedFrontingRequested: requested,
+                ),
+                baseUrl: signalServiceInfo.baseUrl,
+                censorshipCircumventionPathPrefix: signalServiceInfo.censorshipCircumventionPathPrefix,
+                shouldUseSignalCertificate: signalServiceInfo.shouldUseSignalCertificate,
+            )
+        }
     }
 
     private func buildUrlEndpoint(
@@ -210,14 +214,17 @@ public class OWSSignalService: OWSSignalServiceProtocol {
         for signalServiceInfo: SignalServiceInfo,
         endpoint: OWSURLSessionEndpoint,
         configuration: URLSessionConfiguration?,
-    ) -> OWSURLSessionProtocol {
-        return buildUrlSession(
-            endpoint: endpoint,
-            configuration: configuration,
-            assumesHTTP3Capable: signalServiceInfo.assumesHTTP3Capable,
-            shouldHandleRemoteDeprecation: signalServiceInfo.shouldHandleRemoteDeprecation,
-            onFailureCallback: nil,
-        )
+    ) throws -> OWSURLSessionProtocol {
+        try urlSessionPolicy.withServiceSession(requiring: signalServiceInfo.type.requiredHTTPCapability,
+                                               frontingRequested: { self.isCensorshipCircumventionActive || endpoint.frontingInfo != nil }) { _ in
+            buildUrlSession(
+                endpoint: endpoint,
+                configuration: configuration,
+                assumesHTTP3Capable: signalServiceInfo.assumesHTTP3Capable,
+                shouldHandleRemoteDeprecation: signalServiceInfo.shouldHandleRemoteDeprecation,
+                onFailureCallback: nil,
+            )
+        }
     }
 
     private func buildUrlSession(

@@ -5,6 +5,39 @@ import XCTest
 @testable import SignalServiceKit
 
 final class BConnectedUpdatesFactoryTest: XCTestCase {
+    func testOwnedMainStorageAndDirectSVRFactoriesRejectBeforeConstruction() throws {
+        let service = OWSSignalServiceMock()
+        service.transportCapabilities = .chatOnly
+        var calls = 0
+        service.urlEndpointBuilder = { info in calls += 1; return self.endpoint(for: info) }
+        service.mockUrlSessionBuilder = { _, endpoint, _ in
+            calls += 1; return BaseOWSURLSessionMock(endpoint: endpoint, configuration: .ephemeral)
+        }
+        XCTAssertThrowsError(try service.urlSessionForMainSignalService()) {
+            XCTAssertEqual($0 as? BConnectedTransportError, .unavailable(.mainServiceHTTP))
+        }
+        XCTAssertThrowsError(try service.urlSessionForStorageService()) {
+            XCTAssertEqual($0 as? BConnectedTransportError, .unavailable(.storageService))
+        }
+        for type: SignalServiceType in [.mainSignalService, .storageService, .svr2, .updates, .updates2] {
+            let info = type.signalServiceInfo()
+            XCTAssertThrowsError(try service.buildUrlEndpoint(for: info)) {
+                XCTAssertEqual($0 as? BConnectedTransportError, .unavailable(type.requiredHTTPCapability))
+            }
+            XCTAssertThrowsError(try service.buildUrlSession(for: info, endpoint: endpoint(for: info), configuration: nil))
+        }
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testLegacyMainStorageAndSVRFactoriesRemainAvailable() throws {
+        let service = OWSSignalServiceMock()
+        _ = try service.urlSessionForMainSignalService()
+        _ = try service.urlSessionForStorageService()
+        let info = SignalServiceType.svr2.signalServiceInfo()
+        let endpoint = try service.buildUrlEndpoint(for: info)
+        _ = try service.buildUrlSession(for: info, endpoint: endpoint, configuration: nil)
+    }
+
     func testOwnedUpdatesDeniedBeforeEndpointOrSessionFactory() {
         let service = OWSSignalServiceMock()
         service.transportCapabilities = .chatOnly

@@ -27,7 +27,8 @@ public class OWSSignalServiceMock: OWSSignalServiceProtocol {
 
     public var urlEndpointBuilder: ((SignalServiceInfo) -> OWSURLSessionEndpoint)?
 
-    public func buildUrlEndpoint(for signalServiceInfo: SignalServiceInfo) -> OWSURLSessionEndpoint {
+    public func buildUrlEndpoint(for signalServiceInfo: SignalServiceInfo) throws -> OWSURLSessionEndpoint {
+        try transportCapabilities.require(signalServiceInfo.type.requiredHTTPCapability)
         return urlEndpointBuilder?(signalServiceInfo) ?? OWSURLSessionEndpoint(
             baseUrl: signalServiceInfo.baseUrl,
             frontingInfo: nil,
@@ -42,7 +43,8 @@ public class OWSSignalServiceMock: OWSSignalServiceProtocol {
         for signalServiceInfo: SignalServiceInfo,
         endpoint: OWSURLSessionEndpoint,
         configuration: URLSessionConfiguration?,
-    ) -> OWSURLSessionProtocol {
+    ) throws -> OWSURLSessionProtocol {
+        try transportCapabilities.require(signalServiceInfo.type.requiredHTTPCapability)
         return mockUrlSessionBuilder?(signalServiceInfo, endpoint, configuration) ?? BaseOWSURLSessionMock(
             endpoint: endpoint,
             configuration: .default,

@@ -22,12 +22,12 @@ public protocol OWSSignalServiceProtocol: AnyObject {
     func updateHasCensoredPhoneNumberDuringProvisioning(_ e164: E164)
     func resetHasCensoredPhoneNumberFromProvisioning()
 
-    func buildUrlEndpoint(for signalServiceInfo: SignalServiceInfo) -> OWSURLSessionEndpoint
+    func buildUrlEndpoint(for signalServiceInfo: SignalServiceInfo) throws -> OWSURLSessionEndpoint
     func buildUrlSession(
         for signalServiceInfo: SignalServiceInfo,
         endpoint: OWSURLSessionEndpoint,
         configuration: URLSessionConfiguration?,
-    ) -> OWSURLSessionProtocol
+    ) throws -> OWSURLSessionProtocol
 
     func sharedUrlSessionForCdn(cdnNumber: UInt32) async throws -> OWSURLSessionProtocol
 }
@@ -47,32 +47,34 @@ public extension OWSSignalServiceProtocol {
     private func buildUrlSession(
         for signalServiceType: SignalServiceType,
         configuration: URLSessionConfiguration? = nil,
-    ) -> OWSURLSessionProtocol {
+    ) throws -> OWSURLSessionProtocol {
+        // Deny before resolving TSConstants or constructing any endpoint/session.
+        try transportCapabilities.require(signalServiceType.requiredHTTPCapability)
         let signalServiceInfo = signalServiceType.signalServiceInfo()
-        return buildUrlSession(
+        return try buildUrlSession(
             for: signalServiceInfo,
-            endpoint: buildUrlEndpoint(for: signalServiceInfo),
+            endpoint: try buildUrlEndpoint(for: signalServiceInfo),
             configuration: configuration,
         )
     }
 
-    func urlSessionForMainSignalService() -> OWSURLSessionProtocol {
-        buildUrlSession(for: .mainSignalService)
+    func urlSessionForMainSignalService() throws -> OWSURLSessionProtocol {
+        try buildUrlSession(for: .mainSignalService)
     }
 
-    func urlSessionForStorageService() -> OWSURLSessionProtocol {
-        buildUrlSession(for: .storageService)
+    func urlSessionForStorageService() throws -> OWSURLSessionProtocol {
+        try buildUrlSession(for: .storageService)
     }
 
     func urlSessionForUpdates() throws -> OWSURLSessionProtocol {
         try transportCapabilities.perform(requiring: .updates) {
-            buildUrlSession(for: .updates)
+            try buildUrlSession(for: .updates)
         }
     }
 
     func urlSessionForUpdates2() throws -> OWSURLSessionProtocol {
         try transportCapabilities.perform(requiring: .updates) {
-            buildUrlSession(for: .updates2)
+            try buildUrlSession(for: .updates2)
         }
     }
 }
@@ -90,6 +92,15 @@ public struct SignalServiceInfo {
 }
 
 extension SignalServiceType {
+    var requiredHTTPCapability: BConnectedTransportCapability {
+        switch self {
+        case .mainSignalService: .mainServiceHTTP
+        case .storageService: .storageService
+        case .updates, .updates2: .updates
+        case .svr2: .secureValueRecovery
+        }
+    }
+
 
     public func signalServiceInfo() -> SignalServiceInfo {
         switch self {

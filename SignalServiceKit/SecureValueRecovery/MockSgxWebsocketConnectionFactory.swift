@@ -8,6 +8,7 @@ import Foundation
 #if TESTABLE_BUILD
 
 public class MockSgxWebsocketConnectionFactory: SgxWebsocketConnectionFactory {
+    public var transportCapabilities: BConnectedTransportCapabilities = .legacy
 
     private var onConnectAndPerformHandshakeHandlers = [String: (Any) async throws -> Any]()
 
@@ -21,6 +22,7 @@ public class MockSgxWebsocketConnectionFactory: SgxWebsocketConnectionFactory {
     public func connectAndPerformHandshake<Configurator: SgxWebsocketConfigurator>(
         configurator: Configurator,
     ) async throws -> SgxWebsocketConnection<Configurator> {
+        try transportCapabilities.require(Configurator.signalServiceType.requiredHTTPCapability)
         let key = String(describing: Configurator.self)
         return try await onConnectAndPerformHandshakeHandlers[key]!(configurator) as! SgxWebsocketConnection<Configurator>
     }

@@ -77,3 +77,18 @@ python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-sim
 ```
 
 This compiles a separate executable against the actual built SignalServiceKit framework. It never launches Signal.app or initializes AppSetup. Four SQLCipher in-memory probes cover rollback of account/prekey/metadata/receipt writes, unchanged cached and recreated account readers, exact persisted bytes, conflicting identities, and key-counter safety. These tests do not exercise the entire native installer dependency graph, identity-manager lifecycle, encrypted-file crash recovery, production providers, or device acceptance. The framework must be rebuilt from the reviewed current source before running the probe. The normal app remains intentionally nonrunnable in compile-validation mode.
+
+
+## Synchronous service factory gates
+
+The main HTTP, storage/groups, updates and SVR URLSession factories now reject missing immutable capabilities before resolving upstream service constants, consulting fronting/DB state or constructing a session. Chat transport support is separate from `mainServiceHTTP`; having an authenticated chat connection does not implicitly enable a legacy HTTP origin. Direct endpoint and session entry points are checked as well. Existing explicitly selected legacy services retain their endpoint, trust and fronting behavior.
+
+Storage/group authorization, group profile-credential loading, SGX handshake credentials, and periodic SVR credential refresh are gated before their respective fetches. The native websocket's existing failable constructor returns nil with a sanitized unavailable log; the SGX entry point preserves a typed unavailable error before reaching that constructor. AppSetup passes the already composed transport capabilities into SGX, with no default legacy capability. None of these gates enables an owned storage or group endpoint. Required pilot Groups/Stories still need separately validated owned routes and parameters before the account's pending-services barrier can be released.
+
+Focused tests exercise both owned/default policy modes and the actual service protocol factory source. The separate simulator framework probe checks concrete HTTP factories and SGX before configuration, DB/session, credential or socket effects:
+
+```sh
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID> --probe http-services
+```
+
+This is a bounded factory/credential boundary, not a claim that all UI/background, profile publication, account attributes, media or extension paths are ready. Owned attribute publication must omit recoveryPassword under the one-iPhone pilot policy. No live origin, upstream fallback, services-ready transition or backend release flag is added.

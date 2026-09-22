@@ -4,6 +4,15 @@
 struct BConnectedURLSessionPolicy {
     let capabilities: BConnectedTransportCapabilities
 
+    /// The capability gate precedes configuration/DB reads as well as session construction.
+    func withServiceSession<Value>(requiring capability: BConnectedTransportCapability,
+                                   frontingRequested: () -> Bool, build: (Bool) throws -> Value) throws -> Value {
+        try capabilities.require(capability)
+        let requested = frontingRequested()
+        try requireFrontingIfRequested(requested)
+        return try build(requested)
+    }
+
     func requireCdn(_ cdnNumber: UInt32) throws {
         switch cdnNumber {
         case 0, 2: try capabilities.require(.legacyCdn)

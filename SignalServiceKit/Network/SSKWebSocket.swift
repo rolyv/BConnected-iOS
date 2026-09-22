@@ -143,28 +143,34 @@ public class SSKWebSocketNative: SSKWebSocket {
         signalService: OWSSignalServiceProtocol,
         callbackScheduler: Scheduler,
     ) {
-        let signalServiceInfo = request.signalService.signalServiceInfo()
+        do {
+            try signalService.transportCapabilities.require(request.signalService.requiredHTTPCapability)
+            let signalServiceInfo = request.signalService.signalServiceInfo()
 
-        let endpoint = signalService.buildUrlEndpoint(for: signalServiceInfo)
+            let endpoint = try signalService.buildUrlEndpoint(for: signalServiceInfo)
 
-        guard let urlRequest = request.build(for: endpoint) else {
+            guard let urlRequest = request.build(for: endpoint) else {
+                return nil
+            }
+
+            let configuration = OWSURLSession.defaultConfigurationWithoutCaching
+
+            // For some reason, `URLSessionWebSocketTask` will only respect the proxy
+            // configuration if started with a URL and not a URLRequest. As a temporary
+            // workaround, port header information from the request to the session.
+            configuration.httpAdditionalHeaders = urlRequest.allHTTPHeaderFields
+
+            self.urlSession = try signalService.buildUrlSession(
+                for: signalServiceInfo,
+                endpoint: endpoint,
+                configuration: configuration,
+            )
+            self.requestUrl = urlRequest.url!
+            self.callbackScheduler = callbackScheduler
+        } catch {
+            Logger.warn("The requested websocket service is unavailable for the selected transport.")
             return nil
         }
-
-        let configuration = OWSURLSession.defaultConfigurationWithoutCaching
-
-        // For some reason, `URLSessionWebSocketTask` will only respect the proxy
-        // configuration if started with a URL and not a URLRequest. As a temporary
-        // workaround, port header information from the request to the session.
-        configuration.httpAdditionalHeaders = urlRequest.allHTTPHeaderFields
-
-        self.urlSession = signalService.buildUrlSession(
-            for: signalServiceInfo,
-            endpoint: endpoint,
-            configuration: configuration,
-        )
-        self.requestUrl = urlRequest.url!
-        self.callbackScheduler = callbackScheduler
     }
 
     // MARK: - SSKWebSocket

@@ -462,7 +462,7 @@ public struct StorageService {
     // MARK: - Dependencies
 
     private static var urlSession: OWSURLSessionProtocol {
-        return SSKEnvironment.shared.signalServiceRef.urlSessionForStorageService()
+        get throws { try SSKEnvironment.shared.signalServiceRef.urlSessionForStorageService() }
     }
 
     // MARK: - Storage Requests
@@ -481,6 +481,8 @@ public struct StorageService {
 
         let httpResponse: HTTPResponse
         do {
+            // Construct/check the service before requesting any upstream credentials.
+            let urlSession = try self.urlSession
             let (username, password) = try await requestStorageAuth(chatServiceAuth: chatServiceAuth)
 
             var httpHeaders = HttpHeaders()
@@ -489,7 +491,6 @@ public struct StorageService {
 
             Logger.info("Sending… -> \(requestDescription)")
 
-            let urlSession = self.urlSession
             urlSession.require2xxOr3xx = false
             httpResponse = try await urlSession.performRequest(
                 endpoint,

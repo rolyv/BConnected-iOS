@@ -4,6 +4,36 @@ import XCTest
 @testable import SignalServiceKit
 
 final class BConnectedURLSessionPolicyTest: XCTestCase {
+    func testOwnedHTTPServicesFailBeforeFrontingLookupAndConstruction() throws {
+        for capabilities in [BConnectedTransportCapabilities.chatOnly, .chatOnly.restricted(to: Set(BConnectedTransportCapability.allCases))] {
+            let policy = BConnectedURLSessionPolicy(capabilities: capabilities)
+            for service: BConnectedTransportCapability in [.mainServiceHTTP, .storageService, .updates, .secureValueRecovery] {
+                var calls = 0
+                XCTAssertThrowsError(try policy.withServiceSession(requiring: service, frontingRequested: { calls += 1; return true }) { _ in calls += 1 }) {
+                    XCTAssertEqual($0 as? BConnectedTransportError, .unavailable(service))
+                }
+                XCTAssertEqual(calls, 0)
+            }
+        }
+    }
+
+    func testLegacyHTTPServicesPreserveBuilderResultAndRejectUnsupportedFronting() throws {
+        for service: BConnectedTransportCapability in [.mainServiceHTTP, .storageService, .updates, .secureValueRecovery] {
+            var calls = 0
+            let session = SessionFixture()
+            let actual = try BConnectedURLSessionPolicy(capabilities: .legacy).withServiceSession(
+                requiring: service, frontingRequested: { calls += 1; return true }
+            ) { requested in XCTAssertTrue(requested); calls += 1; return session }
+            XCTAssertTrue(actual === session)
+            XCTAssertEqual(calls, 2)
+            calls = 0
+            XCTAssertThrowsError(try BConnectedURLSessionPolicy(capabilities: .legacy.restricted(to: [service])).withServiceSession(
+                requiring: service, frontingRequested: { true }
+            ) { _ in calls += 1 }) { XCTAssertEqual($0 as? BConnectedTransportError, .unavailable(.domainFronting)) }
+            XCTAssertEqual(calls, 0)
+        }
+    }
+
     func testOwnedCDNsFailBeforeFrontingLookupCacheOrSessionConstruction() async {
         let policy = BConnectedURLSessionPolicy(capabilities: .chatOnly)
         for cdn: UInt32 in [0, 2, 3] {

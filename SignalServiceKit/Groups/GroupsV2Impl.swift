@@ -8,7 +8,7 @@ public import LibSignalClient
 
 public class GroupsV2Impl: GroupsV2 {
     private var urlSession: OWSURLSessionProtocol {
-        return SSKEnvironment.shared.signalServiceRef.urlSessionForStorageService()
+        get throws { try SSKEnvironment.shared.signalServiceRef.urlSessionForStorageService() }
     }
 
     private let authCredentialStore: AuthCredentialStore
@@ -1114,6 +1114,7 @@ public class GroupsV2Impl: GroupsV2 {
         behavior400: Behavior400,
         behavior403: Behavior403,
     ) async throws -> HTTPResponse {
+        try SSKEnvironment.shared.signalServiceRef.transportCapabilities.require(.storageService)
         let tsAccountManager = DependenciesBridge.shared.tsAccountManager
         return try await Retry.performWithBackoff(
             maxAttempts: 3,
@@ -1241,7 +1242,7 @@ public class GroupsV2Impl: GroupsV2 {
         groupId: GroupIdentifier,
     ) async throws -> HTTPResponse {
 
-        let urlSession = self.urlSession
+        let urlSession = try self.urlSession
 
         let requestDescription = "G2 \(request.method) \(request.urlString) [\(groupId.serialize().hexadecimalString)]"
         Logger.info("Sending… -> \(requestDescription)")
@@ -1369,6 +1370,9 @@ public class GroupsV2Impl: GroupsV2 {
         for acis: [Aci],
         forceRefresh: Bool,
     ) async throws -> [Aci: ExpiringProfileKeyCredential] {
+        // Group creation/change builders may ask for profile credentials before constructing
+        // a storage request. Deny that earlier path as well.
+        try SSKEnvironment.shared.signalServiceRef.transportCapabilities.require(.storageService)
         var results = [Aci: ExpiringProfileKeyCredential]()
 
         if !forceRefresh {
