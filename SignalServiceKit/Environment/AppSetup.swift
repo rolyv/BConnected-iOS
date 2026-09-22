@@ -231,6 +231,9 @@ extension AppSetup.GlobalsContinuation {
         )
         #else
         do {
+            // Validate the separately supplied cryptographic authority before constructing any
+            // owned chat transport. TLS certificates are never sender-certificate trust roots.
+            _ = try TSConstants.loadOwnedCryptographicConfiguration()
             let owned = try BConnectedOwnedTransportConfiguration(
                 info: Bundle.main.infoDictionary ?? [:],
                 userAgent: HttpHeaders.userAgentHeaderValueSignalIos
@@ -239,7 +242,7 @@ extension AppSetup.GlobalsContinuation {
         } catch {
             // Keep errors generic: no credential/configuration values enter startup logs.
             // The independent release guard remains until integrated readiness is verified.
-            owsFail("BConnected owned transport inputs or native dependency are unavailable.")
+            owsFail("BConnected owned transport, cryptographic inputs or native dependency are unavailable.")
         }
         #endif
 

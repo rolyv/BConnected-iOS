@@ -138,3 +138,23 @@ This deliberately avoids the upstream setter's logging-key completion callback a
 Validation on 2026-09-22: the actual unsigned app/extensions/framework compile-validation graph built successfully. All **33 focused host tests** passed (22 enrollment/community/lifecycle, two actual app view-model and nine native cryptography). The actual-framework `local-account` probe now has **12 SQLCipher groups**, adding first entropy initialization, exact read-only retry, atomic rollback, seven conflict classes, missing/changed key rejection, preserved self-recipient blocks, receipt validation and absence of completion callbacks. The `file-recovery` probe now runs **18 fresh-process phases with six verified SIGKILL boundaries**, including uncommitted and committed entropy/receipt recovery. Post-restart entropy validation/retry preserves exact receipt bytes with zero SQLite row changes.
 
 Rebuild with `build_graph.sh`, then run the `local-account` and `file-recovery` commands above against a dedicated simulator. The same bounded-probe limitations apply: the native identity-manager installer, real Keychain/file protection, device power loss, app startup, provider calls and device messaging are not covered. Owned profile/account publication, verified service routes/trust/ZK parameters, services-ready release, navigation and complete pilot acceptance remain outstanding. No normal messaging-configured build flag is enabled.
+
+## Explicit owned group and sender-certificate authorities
+
+Owned app and extension bundles now require two independent public configuration inputs:
+
+- `BConnectedGroupPublicParamsBase64`: canonical base64 of the owned group's native `ServerPublicParams` serialization.
+- `BConnectedSenderCertificateTrustRootsBase64`: one to eight distinct canonical base64 native `PublicKey` serializations, in the intended trust-root rotation order.
+
+Native libsignal validates both formats and exact serialization round trips. Wrong types, missing inputs, duplicate/oversized roots, malformed native encodings and noncanonical base64 fail with a sanitized configuration error. These authorities are independent of the messaging host, TLS mode and certificate; none can supply or imply another. Parsing confirms format, not ownership or authorization. No deployment value is added to the production app or extension Info.plists by this source change.
+
+Actual AppSetup checks the cryptographic inputs before constructing owned chat transport. Owned `TSConstants` accessors and their concrete production/staging instances use the supplied parameters and sender roots. Upstream group and sender authority constants are compiled only under explicit `BCONNECTED_LEGACY_TRANSPORT`. This reaches the real GroupsV2/profile and unidentified-delivery consumers; absent inputs never select upstream authorities. Other still-disabled service constants and routes are outside this bounded checkpoint.
+
+The actual unsigned compile-validation graph passed. **69 owned-mode and 65 default-mode host tests** passed, including five new public-authority configuration cases per mode. A standalone actual-framework probe validated byte-preserving consumption through `TSConstants` (static, shared and both concrete environments), `GroupsV2Protos` and `OWSUDManagerImpl` using the public group parameters projected from the local runtime configuration and a clearly synthetic public sender-root fixture. The group parameter serialization was 673 bytes, SHA-256 `01c34eb26581889fb3e0023eac06616e1b023eee61fcad85b046910a39fd3aac`. The probe proves native parsing and configuration selection, not live group credentials, actual sender-certificate trust or remote service acceptance. No private sender-root secret is needed by this workflow.
+
+```sh
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID> \
+  --probe cryptographic-inputs --group-public-params-file /path/to/public-only-params.bin
+```
+
+The driver accepts only a bounded public-only binary parameters file and supplies the synthetic sender root solely inside its temporary test bundle. Do not point it at a whole server configuration or a secret. Real owned sender roots still require authoritative verification and explicit app/extension configuration, along with final verified endpoint/port/TLS inputs, service routing, profile/account publication, readiness lifecycle and pilot/device acceptance. Pending-services and the normal backend release guard remain intact.

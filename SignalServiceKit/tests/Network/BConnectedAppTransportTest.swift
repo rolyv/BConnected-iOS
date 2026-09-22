@@ -130,6 +130,68 @@ final class BConnectedAppTransportTest: XCTestCase {
         XCTAssertEqual(effects, 1)
     }
 
+    private func cryptographicInfo() throws -> [String: Any] {
+        ["BConnectedGroupPublicParamsBase64": try ServerSecretParams.generate().getPublicParams().serialize().base64EncodedString(),
+         "BConnectedSenderCertificateTrustRootsBase64": [PrivateKey.generate().publicKey.serialize().base64EncodedString()]]
+    }
+
+    func testOwnedCryptographicInputsArePreservedIndependentlyOfTLS() throws {
+        var supplied = try cryptographicInfo()
+        supplied["BConnectedMessagingTrust"] = "certificate"
+        supplied["BConnectedMessagingCertificateDERBase64"] = "AQID"
+        let configuration = try BConnectedOwnedCryptographicConfiguration(info: supplied)
+        XCTAssertEqual(configuration.groupServerPublicParams.base64EncodedString(), supplied["BConnectedGroupPublicParamsBase64"] as? String)
+        XCTAssertEqual(configuration.senderCertificateTrustRoots, supplied["BConnectedSenderCertificateTrustRootsBase64"] as? [String])
+    }
+
+    func testEveryCryptographicAuthorityInputIsRequiredWithoutFallback() throws {
+        let valid = try cryptographicInfo()
+        for key in valid.keys {
+            var missing = valid; missing.removeValue(forKey: key)
+            missing["BConnectedMessagingTrust"] = "system"
+            missing["BConnectedMessagingCertificateDERBase64"] = valid["BConnectedGroupPublicParamsBase64"]
+            assertInvalidCryptography(missing)
+        }
+        assertInvalidCryptography([:])
+    }
+
+    func testGroupParametersRequireCanonicalNativePublicEncoding() throws {
+        let valid = try cryptographicInfo()
+        let original = valid["BConnectedGroupPublicParamsBase64"] as! String
+        let root = (valid["BConnectedSenderCertificateTrustRootsBase64"] as! [String])[0]
+        for invalid: Any in ["", 1, "====", "AQID", original + "\n", root,
+                             Data(repeating: 0, count: 4097).base64EncodedString(),
+                             (Data(base64Encoded: original)! + Data([1])).base64EncodedString()] {
+            var changed = valid; changed["BConnectedGroupPublicParamsBase64"] = invalid
+            assertInvalidCryptography(changed)
+        }
+    }
+
+    func testSenderRootsRequireDistinctBoundedNativePublicKeys() throws {
+        let valid = try cryptographicInfo()
+        let root = (valid["BConnectedSenderCertificateTrustRootsBase64"] as! [String])[0]
+        for invalid: Any in [[], root, [1], [root, root], ["AQID"], [root + "\n"],
+                             [valid["BConnectedGroupPublicParamsBase64"] as! String],
+                             [Data(repeating: 0, count: 33).base64EncodedString()],
+                             (0..<9).map { _ in PrivateKey.generate().publicKey.serialize().base64EncodedString() }] {
+            var changed = valid; changed["BConnectedSenderCertificateTrustRootsBase64"] = invalid
+            assertInvalidCryptography(changed)
+        }
+    }
+
+    func testExplicitSenderRootRotationOrderIsPreserved() throws {
+        var supplied = try cryptographicInfo()
+        let roots = (0..<3).map { _ in PrivateKey.generate().publicKey.serialize().base64EncodedString() }
+        supplied["BConnectedSenderCertificateTrustRootsBase64"] = roots
+        XCTAssertEqual(try BConnectedOwnedCryptographicConfiguration(info: supplied).senderCertificateTrustRoots, roots)
+    }
+
+    private func assertInvalidCryptography(_ info: [String: Any], file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertThrowsError(try BConnectedOwnedCryptographicConfiguration(info: info), file: file, line: line) {
+            XCTAssertEqual($0 as? BConnectedTransportError, .invalidOwnedConfiguration, file: file, line: line)
+        }
+    }
+
     private func configuration(_ info: [String: Any]) throws -> BConnectedOwnedTransportConfiguration {
         try BConnectedOwnedTransportConfiguration(info: info, userAgent: "BConnected fixture")
     }

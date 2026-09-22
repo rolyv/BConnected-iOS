@@ -3,6 +3,46 @@
 import Foundation
 import LibSignalClient
 
+/// Public cryptographic inputs are independent of HTTPS trust and service addresses. Native
+/// parsing proves format/canonical encoding only; deployment must establish their ownership.
+struct BConnectedOwnedCryptographicConfiguration {
+    let groupServerPublicParams: Data
+    let senderCertificateTrustRoots: [String]
+
+    init(info: [String: Any]) throws {
+        do {
+            let params = try Self.canonicalBase64(info["BConnectedGroupPublicParamsBase64"], maximumBytes: 4096)
+            guard try ServerPublicParams(contents: params).serialize() == params,
+                  let encodedRoots = info["BConnectedSenderCertificateTrustRootsBase64"] as? [String],
+                  !encodedRoots.isEmpty, encodedRoots.count <= 8,
+                  Set(encodedRoots).count == encodedRoots.count else {
+                throw BConnectedTransportError.invalidOwnedConfiguration
+            }
+            for encoded in encodedRoots {
+                let bytes = try Self.canonicalBase64(encoded, maximumBytes: 33)
+                guard bytes.count == 33, try PublicKey(bytes).serialize() == bytes else {
+                    throw BConnectedTransportError.invalidOwnedConfiguration
+                }
+            }
+            groupServerPublicParams = params
+            senderCertificateTrustRoots = encodedRoots
+        } catch {
+            // Never surface native parser details or configuration contents to startup logs.
+            throw BConnectedTransportError.invalidOwnedConfiguration
+        }
+    }
+
+    private static func canonicalBase64(_ value: Any?, maximumBytes: Int) throws -> Data {
+        guard let encoded = value as? String, !encoded.isEmpty,
+              encoded.utf8.count <= ((maximumBytes + 2) / 3) * 4,
+              let bytes = Data(base64Encoded: encoded), !bytes.isEmpty, bytes.count <= maximumBytes,
+              bytes.base64EncodedString() == encoded else {
+            throw BConnectedTransportError.invalidOwnedConfiguration
+        }
+        return bytes
+    }
+}
+
 /// Explicit public configuration inputs, supplied independently to the app and each extension.
 /// No production host, probe certificate, or Signal environment is a default.
 struct BConnectedOwnedTransportConfiguration {

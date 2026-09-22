@@ -63,7 +63,13 @@ public class TSConstants {
     public static var svr2URL: String { shared.svr2URL }
     public static var registrationCaptchaURL: String { shared.registrationCaptchaURL }
     public static var challengeCaptchaURL: String { shared.challengeCaptchaURL }
-    public static var kUDTrustRoots: [String] { shared.kUDTrustRoots }
+    public static var kUDTrustRoots: [String] {
+#if BCONNECTED_LEGACY_TRANSPORT
+        return shared.kUDTrustRoots
+#else
+        return ownedCryptographicConfiguration.senderCertificateTrustRoots
+#endif
+    }
     public static var updatesURL: String { shared.updatesURL }
     public static var updates2URL: String { shared.updates2URL }
 
@@ -81,9 +87,24 @@ public class TSConstants {
 
     public static var applicationGroup: String { shared.applicationGroup }
 
-    public static var serverPublicParams: Data { shared.serverPublicParams }
+    public static var serverPublicParams: Data {
+#if BCONNECTED_LEGACY_TRANSPORT
+        return shared.serverPublicParams
+#else
+        return ownedCryptographicConfiguration.groupServerPublicParams
+#endif
+    }
     public static var callLinkPublicParams: Data { shared.callLinkPublicParams }
     public static var backupServerPublicParams: Data { shared.backupServerPublicParams }
+
+    static func loadOwnedCryptographicConfiguration() throws -> BConnectedOwnedCryptographicConfiguration {
+        try BConnectedOwnedCryptographicConfiguration(info: Bundle.main.infoDictionary ?? [:])
+    }
+
+    private static let ownedCryptographicConfiguration: BConnectedOwnedCryptographicConfiguration = {
+        do { return try loadOwnedCryptographicConfiguration() }
+        catch { owsFail("BConnected owned group parameters or sender-certificate trust roots are unavailable.") }
+    }()
 
     public static let shared: TSConstantsProtocol = {
         switch environment {
@@ -174,7 +195,11 @@ public class TSConstantsProduction: TSConstantsProtocol {
     public let svr2URL = "wss://svr2.signal.org"
     public let registrationCaptchaURL = "https://signalcaptchas.org/registration/generate.html"
     public let challengeCaptchaURL = "https://signalcaptchas.org/challenge/generate.html"
+#if BCONNECTED_LEGACY_TRANSPORT
     public let kUDTrustRoots = ["BXu6QIKVz5MA8gstzfOgRQGqyLqOwNKHL6INkv3IHWMF", "BUkY0I+9+oPgDCn4+Ac6Iu813yvqkDr/ga8DzLxFxuk6"]
+#else
+    public var kUDTrustRoots: [String] { TSConstants.kUDTrustRoots }
+#endif
     public let updatesURL = "https://updates.signal.org"
     public let updates2URL = "https://updates2.signal.org"
 
@@ -207,7 +232,11 @@ public class TSConstantsProduction: TSConstantsProtocol {
     /// We *might* need to clear credentials (or perform some other migration)
     /// when this value changes, depending on how it's changing. If you do need
     /// to perform a migration, check out `ZkParamsMigrator`.
+#if BCONNECTED_LEGACY_TRANSPORT
     public let serverPublicParams = Data(base64Encoded: "AMhf5ywVwITZMsff/eCyudZx9JDmkkkbV6PInzG4p8x3VqVJSFiMvnvlEKWuRob/1eaIetR31IYeAbm0NdOuHH8Qi+Rexi1wLlpzIo1gstHWBfZzy1+qHRV5A4TqPp15YzBPm0WSggW6PbSn+F4lf57VCnHF7p8SvzAA2ZZJPYJURt8X7bbg+H3i+PEjH9DXItNEqs2sNcug37xZQDLm7X36nOoGPs54XsEGzPdEV+itQNGUFEjY6X9Uv+Acuks7NpyGvCoKxGwgKgE5XyJ+nNKlyHHOLb6N1NuHyBrZrgtY/JYJHRooo5CEqYKBqdFnmbTVGEkCvJKxLnjwKWf+fEPoWeQFj5ObDjcKMZf2Jm2Ae69x+ikU5gBXsRmoF94GXTLfN0/vLt98KDPnxwAQL9j5V1jGOY8jQl6MLxEs56cwXN0dqCnImzVH3TZT1cJ8SW1BRX6qIVxEzjsSGx3yxF3suAilPMqGRp4ffyopjMD1JXiKR2RwLKzizUe5e8XyGOy9fplzhw3jVzTRyUZTRSZKkMLWcQ/gv0E4aONNqs4P+NameAZYOD12qRkxosQQP5uux6B2nRyZ7sAV54DgFyLiRcq1FvwKw2EPQdk4HDoePrO/RNUbyNddnM/mMgj4FW65xCoT1LmjrIjsv/Ggdlx46ueczhMgtBunx1/w8k8V+l8LVZ8gAT6wkU5J+DPQalQguMg12Jzug3q4TbdHiGCmD9EunCwOmsLuLJkz6EcSYXtrlDEnAM+hicw7iergYLLlMXpfTdGxJCWJmP4zqUFeTTmsmhsjGBt7NiEB/9pFFEB3pSbf4iiUukw63Eo8Aqnf4iwob6X1QviCWuc8t0LUlT9vALgh/f2DPVOOmR0RW6bgRvc7DSF20V/omg+YBw==")!
+#else
+    public var serverPublicParams: Data { TSConstants.serverPublicParams }
+#endif
 
     public let callLinkPublicParams = Data(base64Encoded: "AeCO67P9mIv1yUHkdeZ9JF789GDbox61GvTqq3S4kYc1ADUWxWHQygU390tv1oRWt9WjkdZlU7mKkifF59ftjE+2ZlMmxns6I+ySiLpR8FEmfu+TGpVp3zYTjNV93obJJTyBCCsSHVETCyQRbKdCyb5TMa6LGrvcZaX0Q/VAavhuNA/m4kSiRMgSnYrUjGhVekdDnF+7xioo4wvFnxjIDh7uJQrYOWD6MloNGX7St5gbysTuQQ7i/HI38b9V8x8mKazuDSXxB//BKGZx/XHkK8cHX+QK1MPxYUVM1/CBI5oW")!
 
@@ -231,7 +260,11 @@ public class TSConstantsStaging: TSConstantsProtocol {
     public let challengeCaptchaURL = "https://signalcaptchas.org/staging/challenge/generate.html"
     // There's no separate test SFU for staging.
     public let sfuTestURL = "https://sfu.test.voip.signal.org"
+#if BCONNECTED_LEGACY_TRANSPORT
     public let kUDTrustRoots = ["BbqY1DzohE4NUZoVF+L18oUPrK3kILllLEJh2UnPSsEx", "BYhU6tPjqP46KGZEzRs1OL4U39V5dlPJ/X09ha4rErkm"]
+#else
+    public var kUDTrustRoots: [String] { TSConstants.kUDTrustRoots }
+#endif
     // There's no separate updates endpoint for staging.
     public let updatesURL = "https://updates.signal.org"
     public let updates2URL = "https://updates2.signal.org"
@@ -259,7 +292,11 @@ public class TSConstantsStaging: TSConstantsProtocol {
     /// We *might* need to clear credentials (or perform some other migration)
     /// when this value changes, depending on how it's changing. If you do need
     /// to perform a migration, check out `ZkParamsMigrator`.
+#if BCONNECTED_LEGACY_TRANSPORT
     public let serverPublicParams = Data(base64Encoded: "ABSY21VckQcbSXVNCGRYJcfWHiAMZmpTtTELcDmxgdFbtp/bWsSxZdMKzfCp8rvIs8ocCU3B37fT3r4Mi5qAemeGeR2X+/YmOGR5ofui7tD5mDQfstAI9i+4WpMtIe8KC3wU5w3Inq3uNWVmoGtpKndsNfwJrCg0Hd9zmObhypUnSkfYn2ooMOOnBpfdanRtrvetZUayDMSC5iSRcXKpdlukrpzzsCIvEwjwQlJYVPOQPj4V0F4UXXBdHSLK05uoPBCQG8G9rYIGedYsClJXnbrgGYG3eMTG5hnx4X4ntARBgELuMWWUEEfSK0mjXg+/2lPmWcTZWR9nkqgQQP0tbzuiPm74H2wMO4u1Wafe+UwyIlIT9L7KLS19Aw8r4sPrXZSSsOZ6s7M1+rTJN0bI5CKY2PX29y5Ok3jSWufIKcgKOnWoP67d5b2du2ZVJjpjfibNIHbT/cegy/sBLoFwtHogVYUewANUAXIaMPyCLRArsKhfJ5wBtTminG/PAvuBdJ70Z/bXVPf8TVsR292zQ65xwvWTejROW6AZX6aqucUjlENAErBme1YHmOSpU6tr6doJ66dPzVAWIanmO/5mgjNEDeK7DDqQdB1xd03HT2Qs2TxY3kCK8aAb/0iM0HQiXjxZ9HIgYhbtvGEnDKW5ILSUydqH/KBhW4Pb0jZWnqN/YgbWDKeJxnDbYcUob5ZY5Lt5ZCMKuaGUvCJRrCtuugSMaqjowCGRempsDdJEt+cMaalhZ6gczklJB/IbdwENW9KeVFPoFNFzhxWUIS5ML9riVYhAtE6JE5jX0xiHNVIIPthb458cfA8daR0nYfYAUKogQArm0iBezOO+mPk5vCNWI+wwkyFCqNDXz/qxl1gAntuCJtSfq9OC3NkdhQlgYQ==")!
+#else
+    public var serverPublicParams: Data { TSConstants.serverPublicParams }
+#endif
 
     public let callLinkPublicParams = Data(base64Encoded: "AYhaw+NbxtNLo/RlGFEsHd904hW38LpPJ59jYJlNmT4wwtyOq4xzCs/MyXsfRbIsAYhQjDnpE0rhFtWkMcn/kV740SISwFfpPHunrtZ9h0YWz5QNNbI5I3DRGUjhKXgMU7J7s7qOr0fdms+g0e+L9FMSjJLobDkOngp/m0B5TsxTyqLscJ5VyU69Cj8txImTfHMCKrYphYfRHO78RwPoz2g2tGUAzEbKHm12OgDna2qutkE5TvYqwZczvgZyLVHdHXpvdyOlEdv4afVyWkI7u/S0XYDonIJoHlxqJoTSepZR")!
 
