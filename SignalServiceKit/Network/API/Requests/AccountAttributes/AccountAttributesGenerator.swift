@@ -56,7 +56,13 @@ public struct AccountAttributesGenerator {
             registrationLock = aep?.getMasterKey().deriveRegistrationLock()
         }
 
-        let registrationRecoveryPassword = aep?.getMasterKey().deriveRegistrationRecoveryPassword()
+#if BCONNECTED_LEGACY_TRANSPORT
+        let registrationRecoveryPassword = aep?.getMasterKey().deriveRegistrationRecoveryPassword().canonicalStringRepresentation
+#else
+        // Owned enrollment does not support recovery. Do not derive a recovery credential,
+        // even after a future services-ready transition creates local account entropy.
+        let registrationRecoveryPassword: String? = nil
+#endif
 
         let phoneNumberDiscoverability = tsAccountManager.phoneNumberDiscoverability(tx: tx)
 
@@ -67,7 +73,7 @@ public struct AccountAttributesGenerator {
             unidentifiedAccessKey: udAccessKey,
             unrestrictedUnidentifiedAccess: allowUnrestrictedUD,
             reglockToken: registrationLock?.canonicalStringRepresentation,
-            registrationRecoveryPassword: registrationRecoveryPassword?.canonicalStringRepresentation,
+            registrationRecoveryPassword: registrationRecoveryPassword,
             encryptedDeviceName: nil,
             discoverableByPhoneNumber: phoneNumberDiscoverability,
             capabilities: capabilities,

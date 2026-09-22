@@ -107,3 +107,24 @@ python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-sim
 ```
 
 The probe invokes the production local setup transaction and real account staging validation. It does not instantiate the complete identity-manager dependency graph or test encrypted-file process-crash recovery; recreation means new store/account-reader objects over the same in-memory SQLCipher database. The app remains intentionally nonrunnable in compile-validation mode, and the pending-services and normal backend release guards remain intact.
+
+## Ordinary attributes and encrypted-file process recovery
+
+Owned/default account-attribute generation no longer derives a registration recovery password. The shared Codable wire boundary also omits `recoveryPassword`, including values supplied directly or decoded from earlier cached attributes. Explicit `BCONNECTED_LEGACY_TRANSPORT` retains its existing encoding. This applies to the ordinary `PUT v1/accounts/attributes` request without enabling that request, releasing account readiness, or adding account recovery.
+
+Three host checks compile the exact production attribute type in owned, default and explicit legacy modes. A separate actual-framework simulator probe constructs the ordinary request and checks supplied and decoded recovery values, preserved account fields, and withheld account credentials:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer python3 -m unittest Scripts/bconnected/test_account_attributes.py -v
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID> --probe account-attributes
+```
+
+The new `file-recovery` probe uses an encrypted SQLCipher file and WAL with production database-key formatting and connection preparation. It launches 12 separate simulator processes, kills only its own probe process at four verified points, and reopens the file in later processes. The kill points cover uncommitted and committed native account/prekey/receipt writes and uncommitted and committed self-recipient/receipt preparation. Committed-WAL presence is checked before recovery; a different encryption key is rejected. Each recovery checks the original enrollment material, profile and relevant native key records, and confirms that credentials and identifiers remain hidden. A post-restart local-setup retry performs zero SQLite row changes and preserves receipt bytes.
+
+```sh
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID> --probe file-recovery
+```
+
+On 2026-09-22 the actual unsigned compile-validation workspace graph, all three host checks, the actual request-factory probe and all 12 encrypted-file process phases passed. The probe stages native account and ACI/PNI signed/last-resort key stores using the production methods, then invokes the production local-account transaction; it does not instantiate the full native identity-manager installer, AppSetup or Signal.app. Keychain storage is replaced with a synthetic key loaded from a private temporary file. This establishes these bounded process-termination/restart properties, not device power-loss, iOS Keychain/file-protection, full installer lifecycle, provider or device messaging acceptance. Temporary files, including the synthetic key and enrollment database, are removed by the driver. No SMS, push or remote service is invoked.
+
+Account entropy/remaining setup, owned profile/account publication, verified endpoint/trust/ZK inputs, complete service routing and navigation remain outstanding. Neither this probe nor the wire omission releases pending-services or the normal backend build guard.

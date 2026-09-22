@@ -75,6 +75,26 @@ public struct AccountAttributes: Codable {
         case capabilities
     }
 
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(voice, forKey: .voice)
+        try container.encode(video, forKey: .video)
+        try container.encode(isManualMessageFetchEnabled, forKey: .isManualMessageFetchEnabled)
+        try container.encode(registrationId, forKey: .registrationId)
+        try container.encode(pniRegistrationId, forKey: .pniRegistrationId)
+        try container.encodeIfPresent(unidentifiedAccessKey, forKey: .unidentifiedAccessKey)
+        try container.encode(unrestrictedUnidentifiedAccess, forKey: .unrestrictedUnidentifiedAccess)
+        try container.encodeIfPresent(registrationLockToken, forKey: .registrationLockToken)
+        // Account recovery is deferred for the one-iPhone pilot. Enforce this at the wire
+        // boundary too, so decoded/cached attributes or another caller cannot publish it.
+#if BCONNECTED_LEGACY_TRANSPORT
+        try container.encodeIfPresent(registrationRecoveryPassword, forKey: .registrationRecoveryPassword)
+#endif
+        try container.encodeIfPresent(encryptedDeviceName, forKey: .encryptedDeviceName)
+        try container.encode(discoverableByPhoneNumber, forKey: .discoverableByPhoneNumber)
+        try container.encode(capabilities, forKey: .capabilities)
+    }
+
     public init(
         isManualMessageFetchEnabled: Bool,
         registrationId: UInt32,
