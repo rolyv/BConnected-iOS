@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--simulator", required=True, help="UUID of an already booted dedicated simulator")
-    parser.add_argument("--probe", choices=["native-account", "http-services", "local-account", "account-attributes", "file-recovery", "cryptographic-inputs"], default="native-account")
+    parser.add_argument("--probe", choices=["native-account", "http-services", "local-account", "account-attributes", "file-recovery", "cryptographic-inputs", "group-avatar-form"], default="native-account")
     parser.add_argument("--group-public-params-file", type=Path, help="Public-only binary parameters file for cryptographic-inputs; never a server configuration or private key")
     parser.add_argument("--public-authorities-file", type=Path, help="Optional public-only JSON with senderTrustRoot and senderCertificate; never a private key")
     args = parser.parse_args()
@@ -68,7 +68,7 @@ def main():
             if directory.is_dir() and directory.suffix != ".framework":
                 command += ["-F", str(directory)]
         # Explicit main.swift makes this a standalone top-level test executable.
-        source = {"native-account": "NativeAccountDatabaseProbe.swift", "http-services": "HTTPServiceFactoryProbe.swift", "local-account": "LocalAccountSetupProbe.swift", "account-attributes": "AccountAttributesProbe.swift", "file-recovery": "EnrollmentFileRecoveryProbe.swift", "cryptographic-inputs": "OwnedCryptographicInputsProbe.swift"}[args.probe]
+        source = {"native-account": "NativeAccountDatabaseProbe.swift", "http-services": "HTTPServiceFactoryProbe.swift", "local-account": "LocalAccountSetupProbe.swift", "account-attributes": "AccountAttributesProbe.swift", "file-recovery": "EnrollmentFileRecoveryProbe.swift", "cryptographic-inputs": "OwnedCryptographicInputsProbe.swift", "group-avatar-form": "GroupAvatarFormProbe.swift"}[args.probe]
         (work / "main.swift").write_bytes((ROOT / "Scripts/bconnected/tests" / source).read_bytes())
         command += ["-Xcc", "-I" + str(ROOT / "Pods/Headers/Public"), "-o", str(bundle / "native-db"), str(work / "main.swift")]
         subprocess.run(command, check=True, timeout=120)

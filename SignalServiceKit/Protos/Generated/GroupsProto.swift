@@ -88,6 +88,22 @@ public struct GroupsProtoAvatarUploadAttributes: Codable, CustomDebugStringConve
         return !proto.signature.isEmpty
     }
 
+    public var uploadURL: String? {
+        guard hasUploadURL else {
+            return nil
+        }
+        return proto.uploadURL
+    }
+    public var hasUploadURL: Bool {
+        return !proto.uploadURL.isEmpty
+    }
+
+    public var expiresAt: UInt64 {
+        return proto.expiresAt
+    }
+    public var maxContentLength: UInt32 {
+        return proto.maxContentLength
+    }
     public var hasUnknownFields: Bool {
         return !proto.unknownFields.data.isEmpty
     }
@@ -157,6 +173,11 @@ extension GroupsProtoAvatarUploadAttributes {
         if let _value = signature {
             builder.setSignature(_value)
         }
+        if let _value = uploadURL {
+            builder.setUploadURL(_value)
+        }
+        builder.setExpiresAt(expiresAt)
+        builder.setMaxContentLength(maxContentLength)
         if let _value = unknownFields {
             builder.setUnknownFields(_value)
         }
@@ -238,6 +259,24 @@ public struct GroupsProtoAvatarUploadAttributesBuilder {
 
     public mutating func setSignature(_ valueParam: String) {
         proto.signature = valueParam
+    }
+
+    @available(swift, obsoleted: 1.0)
+    public mutating func setUploadURL(_ valueParam: String?) {
+        guard let valueParam = valueParam else { return }
+        proto.uploadURL = valueParam
+    }
+
+    public mutating func setUploadURL(_ valueParam: String) {
+        proto.uploadURL = valueParam
+    }
+
+    public mutating func setExpiresAt(_ valueParam: UInt64) {
+        proto.expiresAt = valueParam
+    }
+
+    public mutating func setMaxContentLength(_ valueParam: UInt32) {
+        proto.maxContentLength = valueParam
     }
 
     public mutating func setUnknownFields(_ unknownFields: SwiftProtobuf.UnknownStorage) {

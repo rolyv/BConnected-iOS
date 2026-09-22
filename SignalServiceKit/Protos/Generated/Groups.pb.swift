@@ -48,6 +48,13 @@ nonisolated struct GroupsProtos_AvatarUploadAttributes: Sendable {
 
   var signature: String = String()
 
+  /// Owned GCS endpoint; never infer a CDN destination from the opaque key.
+  var uploadURL: String = String()
+
+  var expiresAt: UInt64 = 0
+
+  var maxContentLength: UInt32 = 0
+
   var unknownFields = SwiftProtobuf.UnknownStorage()
 
   init() {}
@@ -1218,7 +1225,7 @@ fileprivate nonisolated let _protobuf_package = "GroupsProtos"
 
 nonisolated extension GroupsProtos_AvatarUploadAttributes: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   static let protoMessageName: String = _protobuf_package + ".AvatarUploadAttributes"
-  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}key\0\u{1}credential\0\u{1}acl\0\u{1}algorithm\0\u{1}date\0\u{1}policy\0\u{1}signature\0")
+  static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}key\0\u{1}credential\0\u{1}acl\0\u{1}algorithm\0\u{1}date\0\u{1}policy\0\u{1}signature\0\u{3}upload_url\0\u{3}expires_at\0\u{3}max_content_length\0")
 
   mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1233,6 +1240,9 @@ nonisolated extension GroupsProtos_AvatarUploadAttributes: SwiftProtobuf.Message
       case 5: try { try decoder.decodeSingularStringField(value: &self.date) }()
       case 6: try { try decoder.decodeSingularStringField(value: &self.policy) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self.signature) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.uploadURL) }()
+      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.expiresAt) }()
+      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.maxContentLength) }()
       default: break
       }
     }
@@ -1260,6 +1270,15 @@ nonisolated extension GroupsProtos_AvatarUploadAttributes: SwiftProtobuf.Message
     if !self.signature.isEmpty {
       try visitor.visitSingularStringField(value: self.signature, fieldNumber: 7)
     }
+    if !self.uploadURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.uploadURL, fieldNumber: 8)
+    }
+    if self.expiresAt != 0 {
+      try visitor.visitSingularUInt64Field(value: self.expiresAt, fieldNumber: 9)
+    }
+    if self.maxContentLength != 0 {
+      try visitor.visitSingularUInt32Field(value: self.maxContentLength, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1271,6 +1290,9 @@ nonisolated extension GroupsProtos_AvatarUploadAttributes: SwiftProtobuf.Message
     if lhs.date != rhs.date {return false}
     if lhs.policy != rhs.policy {return false}
     if lhs.signature != rhs.signature {return false}
+    if lhs.uploadURL != rhs.uploadURL {return false}
+    if lhs.expiresAt != rhs.expiresAt {return false}
+    if lhs.maxContentLength != rhs.maxContentLength {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
