@@ -7,6 +7,7 @@ protocol BConnectedOwnedHTTPSending {
 
 /// Shared restrictive transport for the separately configured community and enrollment origins.
 final class BConnectedOwnedHTTP: BConnectedOwnedHTTPSending {
+    enum ResponseMode { case enrollmentJSON, emptyPublication }
     private final class NoRedirects: NSObject, URLSessionTaskDelegate {
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -14,8 +15,10 @@ final class BConnectedOwnedHTTP: BConnectedOwnedHTTPSending {
         }
     }
     private let session: URLSession
+    private let responseMode: ResponseMode
 
-    init(protocolClasses: [AnyClass]? = nil) {
+    init(protocolClasses: [AnyClass]? = nil, responseMode: ResponseMode = .enrollmentJSON) {
+        self.responseMode = responseMode
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = protocolClasses
         configuration.httpCookieStorage = nil
@@ -35,9 +38,12 @@ final class BConnectedOwnedHTTP: BConnectedOwnedHTTPSending {
             let (bytes, response) = try await session.bytes(for: request)
             defer { bytes.task.cancel() }
             guard let response = response as? HTTPURLResponse, response.url == request.url,
-                  response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json",
+                  response.expectedContentLength <= BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }
+            if responseMode == .enrollmentJSON {
+                guard response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json",
                   response.value(forHTTPHeaderField: "Cache-Control")?.lowercased().split(separator: ",").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "no-store" }) == true,
                   response.expectedContentLength <= BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }
+            }
             var data = Data()
             for try await byte in bytes {
                 guard data.count < BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }

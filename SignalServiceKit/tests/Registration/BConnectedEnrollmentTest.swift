@@ -1,9 +1,11 @@
 // Copyright 2026 BConnected contributors. SPDX-License-Identifier: AGPL-3.0-only
 import Foundation
 import XCTest
+import LibSignalClient
 @testable import SignalServiceKit
 
-final class BConnectedEnrollmentTest: XCTestCase {
+// Test-instance state is immutable; mutable protocol fixtures are scoped to individual tests.
+final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     private let operationId = "00000000-0000-4000-8000-000000000010"
     private let memberId = "00000000-0000-4000-8000-000000000001"
     private let challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
@@ -29,6 +31,151 @@ final class BConnectedEnrollmentTest: XCTestCase {
     private func observation(_ name: String = "verification", operation: BConnectedEnrollmentOperation = .status) throws -> BConnectedEnrollmentObservation {
         let (data, status) = try body(name)
         return try BConnectedEnrollmentWire.response(data, status: status, operation: operation, expectedOperation: operationId, expectedPhone: phone)
+    }
+
+    @MainActor
+    private func publicationFixture() async throws -> (MemoryStore, Sender, PublicationSender, BConnectedEnrollmentCoordinator) {
+        let store = MemoryStore(), sender = Sender(), publisher = PublicationSender()
+        store.supportsNativeInstallation = true
+        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: configuration, publisher: publisher)
+        _ = try coordinator.prepare(input()); try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
+        sender.result = try observation("active"); _ = try await coordinator.perform(.begin)
+        try await coordinator.installNativeAccount(); try coordinator.prepareLocalAccount(); try coordinator.prepareAccountEntropy()
+        sender.calls = []
+        return (store, sender, publisher, coordinator)
+    }
+
+    @MainActor
+    func testPublicationCommitsDispatchBeforeEachRequestAndNeverCompletesReadiness() async throws {
+        let (store, sender, publisher, coordinator) = try await publicationFixture()
+        publisher.beforeSend = { step, record in
+            XCTAssertEqual(try store.load()?.publication, record.publication)
+            XCTAssertEqual(record.publication?.state(for: step), .dispatched)
+        }
+        try await coordinator.publishAccount()
+        XCTAssertEqual(sender.calls, [.status]); XCTAssertEqual(publisher.steps, [.attributes, .profile])
+        XCTAssertTrue(try XCTUnwrap(coordinator.progress()).accountPublicationComplete)
+        let original = try store.load()
+        try await coordinator.publishAccount()
+        XCTAssertEqual(publisher.steps, [.attributes, .profile])
+        XCTAssertEqual(try store.load()?.publication, original?.publication)
+        XCTAssertEqual(try store.load()?.aci.pair, original?.aci.pair)
+    }
+
+    @MainActor
+    func testUncertainProfileRequiresExplicitReplayOfIdenticalFrozenBytes() async throws {
+        let (store, _, publisher, coordinator) = try await publicationFixture()
+        publisher.failStep = .profile
+        do { try await coordinator.publishAccount(); XCTFail() } catch {}
+        let saved = try XCTUnwrap(store.load()?.publication)
+        XCTAssertEqual(saved.attributesState, .acknowledged); XCTAssertEqual(saved.profileState, .dispatched)
+        do { try await coordinator.publishAccount(); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .explicitPublicationRetryRequired) }
+        XCTAssertEqual(publisher.steps, [.attributes, .profile])
+        publisher.failStep = nil
+        try await coordinator.publishAccount(explicitlyRetryUncertainOutcome: true)
+        XCTAssertEqual(publisher.steps, [.attributes, .profile, .profile])
+        XCTAssertEqual(publisher.bodies[1], publisher.bodies[2])
+        XCTAssertEqual(try store.load()?.publication?.encryptedProfile, saved.encryptedProfile)
+    }
+
+    @MainActor
+    func testPublicationResponsePersistenceFailureRetainsMarkerAndSuspensionStopsReplay() async throws {
+        let (store, sender, publisher, coordinator) = try await publicationFixture()
+        store.failPublicationAcknowledgement = true
+        do { try await coordinator.publishAccount(); XCTFail() } catch {}
+        XCTAssertEqual(publisher.steps, [.attributes])
+        XCTAssertEqual(try store.load()?.publication?.attributesState, .dispatched)
+        sender.result = try observation("suspended")
+        do { try await coordinator.publishAccount(explicitlyRetryUncertainOutcome: true); XCTFail() } catch {}
+        XCTAssertEqual(publisher.steps, [.attributes])
+        sender.result = try observation("active"); store.failPublicationAcknowledgement = false
+        try await coordinator.publishAccount(explicitlyRetryUncertainOutcome: true)
+        XCTAssertEqual(publisher.steps, [.attributes, .attributes, .profile])
+        XCTAssertEqual(publisher.bodies[0], publisher.bodies[1])
+    }
+
+    @MainActor
+    func testMissingPublicationConfigurationMakesNoStatusOrPublicationCalls() async throws {
+        let store = MemoryStore(), sender = Sender(), publisher = PublicationSender()
+        store.supportsNativeInstallation = true
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publisher: publisher)
+        do { try await coordinator.publishAccount(); XCTFail() } catch {}
+        XCTAssertTrue(sender.calls.isEmpty && publisher.steps.isEmpty)
+    }
+
+    func testPublicationOriginRejectsUnsafeAndUpstreamRoutes() throws {
+        for string in ["http://example.invalid", "https://u:p@example.invalid", "https://example.invalid/path", "https://example.invalid?q=1", "https://example.invalid#f", "https://chat.signal.org", "https://signal.org", "https://cdn.whispersystems.org", "https://-a.invalid", "https://a..invalid"] {
+            XCTAssertThrowsError(try BConnectedPublicationConfiguration(origin: URL(string: string)!, authorityCommitment: Data(repeating: 1, count: 32)))
+        }
+        let one = try BConnectedPublicationConfiguration(origin: URL(string: "https://example.invalid:443/")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let two = try BConnectedPublicationConfiguration(origin: URL(string: "https://example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+        XCTAssertEqual(one.hash, two.hash)
+        XCTAssertNotEqual(one.hash, try BConnectedPublicationConfiguration(origin: one.origin, authorityCommitment: Data(repeating: 2, count: 32)).hash)
+    }
+
+    @MainActor
+    private func publishedRecordBytes() async throws -> Data {
+        let (store, _, _, coordinator) = try await publicationFixture()
+        try await coordinator.publishAccount()
+        return try JSONEncoder().encode(XCTUnwrap(store.load()))
+    }
+
+    func testPublicationClientUsesExactRoutesCredentialsPayloadsAndEmptySuccessContract() async throws {
+        var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await publishedRecordBytes())
+        record.publication?.attributesState = .dispatched; record.publication?.profileState = .prepared
+        let config = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let http = PublicationHTTP(), client = BConnectedPublicationClient(http: http)
+        let request = try client.request(.attributes, record: record, configuration: config)
+        XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid:8443/v1/accounts/attributes/")
+        XCTAssertEqual(request.httpMethod, "PUT"); XCTAssertEqual(request.httpBody, record.publication?.accountAttributes)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Basic " + Data((record.installedAccount!.aci + ":" + record.password).utf8).base64EncodedString())
+        XCTAssertNil(try BConnectedEnrollmentWire.object(request.httpBody!)["recoveryPassword"])
+        try await client.send(.attributes, record: record, configuration: config)
+        for response in [(Data(), 200), (Data(), 301), (Data(), 401), (Data("{}".utf8), 204)] {
+            http.result = response
+            do { try await client.send(.attributes, record: record, configuration: config); XCTFail() } catch {}
+        }
+        record.publication?.attributesState = .acknowledged; record.publication?.profileState = .dispatched
+        http.result = (Data(), 200)
+        try await client.send(.profile, record: record, configuration: config)
+        XCTAssertEqual(http.lastRequest?.url?.path, "/v1/profile")
+    }
+
+    func testPublicationLedgerRejectsMalformedNativeProfileEvenWithRecomputedPayloadHash() async throws {
+        let original = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await publishedRecordBytes())
+        let ledger = try XCTUnwrap(original.publication)
+        for (field, invalid): (String, Any) in [("name", Data([1]).base64EncodedString()), ("about", Data([1]).base64EncodedString()),
+            ("aboutEmoji", Data([1]).base64EncodedString()), ("phoneNumberSharing", Data([1]).base64EncodedString()),
+            ("version", String(repeating: "z", count: 64)), ("commitment", Data(repeating: 0, count: 32).base64EncodedString()),
+            ("avatar", false), ("paymentAddress", "unexpected")] {
+            var record = original
+            var object = try BConnectedEnrollmentWire.object(ledger.encryptedProfile); object[field] = invalid
+            let profile = try BConnectedEnrollmentWire.encode(object)
+            record.publication = .init(version: ledger.version, configurationHash: ledger.configurationHash, entropyReceipt: ledger.entropyReceipt,
+                profileStateHash: ledger.profileStateHash, accountAttributes: ledger.accountAttributes, encryptedProfile: profile,
+                payloadHash: BConnectedEnrollmentRecord.Publication.hash(attributes: ledger.accountAttributes, profile: profile))
+            XCTAssertThrowsError(try record.validate())
+        }
+    }
+
+    func testPublicationURLSessionRejectsRedirectsAndOversizedBodiesWithoutAutomaticRetry() async throws {
+        var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await publishedRecordBytes())
+        record.publication?.attributesState = .dispatched; record.publication?.profileState = .prepared
+        let config = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let client = BConnectedPublicationClient(http: BConnectedOwnedHTTP(protocolClasses: [EnrollmentURLProtocol.self], responseMode: .emptyPublication))
+        EnrollmentURLProtocol.noStore = false; EnrollmentURLProtocol.redirect = false
+        EnrollmentURLProtocol.responseBody = Data(); EnrollmentURLProtocol.status = 204; EnrollmentURLProtocol.calls = 0
+        defer { EnrollmentURLProtocol.noStore = true; EnrollmentURLProtocol.redirect = false; EnrollmentURLProtocol.responseBody = Data(); EnrollmentURLProtocol.status = 200 }
+        try await client.send(.attributes, record: record, configuration: config)
+        XCTAssertEqual(EnrollmentURLProtocol.calls, 1)
+        EnrollmentURLProtocol.redirect = true
+        do { try await client.send(.attributes, record: record, configuration: config); XCTFail() } catch {}
+        XCTAssertEqual(EnrollmentURLProtocol.calls, 2)
+        EnrollmentURLProtocol.redirect = false; EnrollmentURLProtocol.responseBody = Data(repeating: 0, count: 65_537)
+        do { try await client.send(.attributes, record: record, configuration: config); XCTFail() } catch {}
+        XCTAssertEqual(EnrollmentURLProtocol.calls, 3)
     }
 
     @MainActor
@@ -537,6 +684,36 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
     var supportsNativeInstallation = false
     var failInstall = false
     var installCount = 0
+    var failPublicationAcknowledgement = false
+    func preparePublication(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord {
+        try transaction { record in
+            guard var value = record, let entropy = value.accountEntropyReceipt, value.observation?.state == .active else { throw BConnectedEnrollmentError.immutableConflict }
+            if let existing = value.publication {
+                guard existing.configurationHash == configuration.hash else { throw BConnectedEnrollmentError.immutableConflict }
+            } else {
+                let attributes = try BConnectedEnrollmentWire.encode(BConnectedEnrollmentWire.object(value.registrationRequest)["accountAttributes"] as! [String: Any])
+                let key = try ProfileKey(contents: Data(repeating: 1, count: 32))
+                let aci = Aci(fromUUID: UUID(uuidString: value.installedAccount!.aci)!)
+                let profile = try BConnectedEnrollmentWire.encode(["avatar": true, "sameAvatar": true, "badgeIds": [String](),
+                    "version": String(repeating: "a", count: 64),
+                    "commitment": try key.getCommitment(userId: aci).serialize().base64EncodedString(),
+                    "phoneNumberSharing": Data(repeating: 1, count: 29).base64EncodedString()])
+                value.publication = .init(version: 1, configurationHash: configuration.hash, entropyReceipt: entropy,
+                    profileStateHash: Data(repeating: 1, count: 32), accountAttributes: attributes, encryptedProfile: profile,
+                    payloadHash: BConnectedEnrollmentRecord.Publication.hash(attributes: attributes, profile: profile))
+            }
+            record = value; return value
+        }
+    }
+    func transitionPublication(expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, acknowledge: Bool) throws -> BConnectedEnrollmentRecord {
+        if acknowledge && failPublicationAcknowledgement { throw BConnectedEnrollmentError.persistenceUnavailable }
+        return try transaction { record in
+            guard var value = record, var publication = value.publication, publication == expected.publication else { throw BConnectedEnrollmentError.immutableConflict }
+            if step == .attributes { publication.attributesState = acknowledge ? .acknowledged : .dispatched }
+            else { publication.profileState = acknowledge ? .acknowledged : .dispatched }
+            value.publication = publication; record = value; return value
+        }
+    }
     func prepareAccountEntropy() throws {
         try transaction { record in
             guard var value = record, let local = value.localSetupReceipt else { throw BConnectedEnrollmentError.immutableConflict }
@@ -575,6 +752,25 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
         bytes = try record.map { try encoder.encode($0) }
         return result
     }
+}
+
+private final class PublicationSender: BConnectedPublicationSending {
+    var steps: [BConnectedPublicationStep] = []
+    var bodies: [Data] = []
+    var failStep: BConnectedPublicationStep?
+    var beforeSend: ((BConnectedPublicationStep, BConnectedEnrollmentRecord) throws -> Void)?
+    func send(_ step: BConnectedPublicationStep, record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration) async throws {
+        try beforeSend?(step, record)
+        steps.append(step)
+        bodies.append(step == .attributes ? record.publication!.accountAttributes : record.publication!.encryptedProfile)
+        if step == failStep { throw CancellationError() }
+    }
+}
+
+private final class PublicationHTTP: BConnectedOwnedHTTPSending {
+    var result = (Data(), 204)
+    var lastRequest: URLRequest?
+    func send(_ request: URLRequest) async throws -> (Data, Int) { lastRequest = request; return result }
 }
 private final class Sender: BConnectedEnrollmentSending {
     var calls: [BConnectedEnrollmentOperation] = []

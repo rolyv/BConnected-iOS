@@ -249,4 +249,112 @@ invalidEntropy = try entropyFirst.saved(); invalidEntropy.localSetupReceipt = ni
 do { try invalidEntropy.validate(); preconditionFailure("unbound entropy receipt accepted") }
 catch BConnectedEnrollmentError.persistenceUnavailable {}
 print("PASS malformed or unbound entropy receipt fails persisted-state validation")
-print("12 real local-account/entropy database probe groups passed; no remote service or readiness effects")
+
+func check(_ condition: Bool) { precondition(condition) }
+
+func activate(_ fixture: Fixture) throws {
+    try fixture.db.writeWithRollbackIfThrows { tx in
+        var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: KeyValueStore(collection: "BConnectedEnrollment.v1").getData("attempt", transaction: tx)!)
+        record.observation = .init(operationId: record.operationId!, state: .active, registrationAuthorized: true,
+            phoneVerified: true, nextSmsSeconds: nil, nextCheckSeconds: nil, expiresInSeconds: nil, account: record.installedAccount)
+        KeyValueStore(collection: "BConnectedEnrollment.v1").setData(try JSONEncoder().encode(record), key: "attempt", transaction: tx)
+    }
+}
+let publicationConfiguration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+func publication(_ fixture: Fixture, tx: DBWriteTransaction, configuration: BConnectedPublicationConfiguration = publicationConfiguration) throws -> BConnectedEnrollmentRecord {
+    let record = try BConnectedLocalAccountSetup.preparePublication(tx: tx, configuration: configuration,
+        accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), sharePhoneNumber: false, validateNative: fixture.validate)
+    check(tx.completionBlocks.isEmpty)
+    return record
+}
+func publication(_ fixture: Fixture) throws -> BConnectedEnrollmentRecord {
+    try fixture.db.writeWithRollbackIfThrows { try publication(fixture, tx: $0) }
+}
+func transition(_ fixture: Fixture, expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, ack: Bool, rollback: Bool = false) throws -> BConnectedEnrollmentRecord {
+    try fixture.db.writeWithRollbackIfThrows { tx in
+        let current = try publication(fixture, tx: tx)
+        let next = try BConnectedLocalAccountSetup.transitionPublication(record: current, expected: expected, step: step, acknowledge: ack, tx: tx)
+        check(tx.completionBlocks.isEmpty)
+        if rollback { throw Injected.rollback }
+        return next
+    }
+}
+let publishing = try Fixture()
+try publishing.prepare(); try activate(publishing)
+let beforeMissingEntropy = publishing.changes()
+do { _ = try publication(publishing); preconditionFailure("publication accepted without entropy receipt") }
+catch BConnectedEnrollmentError.immutableConflict {}
+check(publishing.changes() == beforeMissingEntropy)
+try entropy(publishing)
+do {
+    _ = try publishing.db.writeWithRollbackIfThrows { tx in
+        _ = try publication(publishing, tx: tx)
+        throw Injected.rollback
+    }
+} catch Injected.rollback {}
+try check(publishing.saved().publication == nil)
+let prepared = try publication(publishing)
+let payload = prepared.publication!
+let object = try BConnectedEnrollmentWire.object(payload.encryptedProfile)
+let nativeKey = try ProfileKey(contents: publishing.key.keyData)
+let decrypted = try OWSUserProfile.decrypt(profileNameData: Data(base64Encoded: object["name"] as! String)!, profileKey: nativeKey)
+check(decrypted.givenName == "Original" && decrypted.familyName == "Display Name")
+try check(!OWSUserProfile.decrypt(profileBooleanData: Data(base64Encoded: object["phoneNumberSharing"] as! String)!, profileKey: nativeKey))
+check(object["commitment"] as? String == (try nativeKey.getCommitment(userId: publishing.material.aci).serialize().base64EncodedString()))
+check(object["version"] as? String == (try nativeKey.getProfileKeyVersion(userId: publishing.material.aci).asHexadecimalString()))
+let attrs = try BConnectedEnrollmentWire.object(payload.accountAttributes)
+check(attrs["recoveryPassword"] == nil && attrs["registrationLock"] == nil && attrs["name"] == nil)
+check(attrs["unidentifiedAccessKey"] as? String == SMKUDAccessKey(profileKey: publishing.key).keyData.base64EncodedString())
+let beforePublicationRetry = publishing.changes()
+let repeatPublication = try publication(publishing)
+check(repeatPublication.publication == payload && publishing.changes() == beforePublicationRetry)
+publishing.unchangedProfileAndBarrier()
+print("PASS actual native profile encryption/commitment and frozen attributes require entropy; draft rollback is atomic and exact retry is read-only with no callbacks")
+
+do { _ = try transition(publishing, expected: prepared, step: .profile, ack: false); preconditionFailure("out-of-order profile dispatch accepted") }
+catch BConnectedEnrollmentError.immutableConflict {}
+do { _ = try transition(publishing, expected: prepared, step: .attributes, ack: true); preconditionFailure("ack before dispatch accepted") }
+catch BConnectedEnrollmentError.immutableConflict {}
+do { _ = try transition(publishing, expected: prepared, step: .attributes, ack: false, rollback: true) }
+catch Injected.rollback {}
+try check(publishing.saved().publication == payload)
+let dispatched = try transition(publishing, expected: prepared, step: .attributes, ack: false)
+do { _ = try transition(publishing, expected: prepared, step: .attributes, ack: true); preconditionFailure("stale expected record accepted") }
+catch BConnectedEnrollmentError.immutableConflict {}
+do { _ = try transition(publishing, expected: dispatched, step: .attributes, ack: true, rollback: true) }
+catch Injected.rollback {}
+try check(publishing.saved().publication?.attributesState == .dispatched)
+let beforeReplay = publishing.changes()
+let replay = try transition(publishing, expected: dispatched, step: .attributes, ack: false)
+check(publishing.changes() == beforeReplay && replay.publication == dispatched.publication)
+let attributesAccepted = try transition(publishing, expected: replay, step: .attributes, ack: true)
+let profileDispatched = try transition(publishing, expected: attributesAccepted, step: .profile, ack: false)
+let complete = try transition(publishing, expected: profileDispatched, step: .profile, ack: true)
+check(complete.publication!.complete && complete.publication!.encryptedProfile == payload.encryptedProfile)
+publishing.unchangedProfileAndBarrier()
+print("PASS SQLCipher publication sequence, stale snapshot checks, dispatch/ack rollback and read-only replay preserve frozen bytes and keep readiness hidden")
+
+for kind in 0..<4 {
+    let fixture = try Fixture(); try fixture.prepare(); try entropy(fixture); try activate(fixture)
+    _ = try publication(fixture)
+    if kind == 0 {
+        fixture.db.write { try! $0.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = 'Changed'") }
+    } else if kind == 1 {
+        let id = try fixture.saved().localSetupReceipt!.recipientId
+        fixture.db.write { BlockedRecipientStore().setBlocked(true, recipientId: id, tx: $0) }
+    } else if kind == 2 {
+        fixture.db.write { NewKeyValueStore(collection: "AccountEntropyPool").writeValue(LibSignalClient.AccountEntropyPool.generate(), forKey: "aep", tx: $0) }
+    }
+    let before = fixture.changes()
+    do {
+        _ = try fixture.db.writeWithRollbackIfThrows { tx in
+            let configuration = kind == 3 ? try BConnectedPublicationConfiguration(origin: publicationConfiguration.origin, authorityCommitment: Data(repeating: 2, count: 32)) : publicationConfiguration
+            return try publication(fixture, tx: tx, configuration: configuration)
+        }
+        preconditionFailure("changed publication prerequisite accepted")
+    } catch BConnectedEnrollmentError.immutableConflict {}
+    check(fixture.changes() == before)
+}
+print("PASS changed profile, block, native entropy and authority configuration all reject publication before mutation")
+
+print("15 real local-account/entropy/publication database probe groups passed; no remote service or readiness effects")

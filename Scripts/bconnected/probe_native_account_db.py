@@ -21,11 +21,14 @@ def main():
     parser.add_argument("--simulator", required=True, help="UUID of an already booted dedicated simulator")
     parser.add_argument("--probe", choices=["native-account", "http-services", "local-account", "account-attributes", "file-recovery", "cryptographic-inputs"], default="native-account")
     parser.add_argument("--group-public-params-file", type=Path, help="Public-only binary parameters file for cryptographic-inputs; never a server configuration or private key")
+    parser.add_argument("--public-authorities-file", type=Path, help="Optional public-only JSON with senderTrustRoot and senderCertificate; never a private key")
     args = parser.parse_args()
     if not os.environ.get("DEVELOPER_DIR"):
         parser.error("Set DEVELOPER_DIR to the reviewed Xcode installation")
     if (args.probe == "cryptographic-inputs") != (args.group_public_params_file is not None):
         parser.error("Only cryptographic-inputs requires --group-public-params-file")
+    if args.public_authorities_file is not None and args.probe != "cryptographic-inputs":
+        parser.error("Public authorities are only supported by cryptographic-inputs")
     products = ROOT / ".build/CompileValidation/Build/Products/Debug-iphonesimulator"
     sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"], text=True).strip()
     # Simulator processes cannot reliably read macOS-protected Documents folders.
@@ -45,6 +48,18 @@ def main():
             bundle_info["BConnectedGroupPublicParamsBase64"] = base64.b64encode(public).decode("ascii")
             # This is a known public test-fixture key, NOT a production sender trust root.
             bundle_info["BConnectedSenderCertificateTrustRootsBase64"] = [fixture["aciIdentityKey"]]
+            if args.public_authorities_file is not None:
+                raw = args.public_authorities_file.read_bytes()
+                if len(raw) > 8192:
+                    parser.error("Public authorities file exceeds bound")
+                authorities = json.loads(raw)
+                if set(authorities) != {"senderCertificate", "senderTrustRoot", "senderCertificateId", "groupsServerPublic"}:
+                    parser.error("Expected exact public-only authority fields")
+                if base64.b64decode(authorities["groupsServerPublic"], validate=True) != public:
+                    parser.error("Group public authority mismatch")
+                bundle_info["BConnectedSenderCertificateTrustRootsBase64"] = [authorities["senderTrustRoot"]]
+                bundle_info["BConnectedProbeServerCertificateBase64"] = authorities["senderCertificate"]
+                bundle_info["BConnectedProbeServerCertificateId"] = authorities["senderCertificateId"]
         (bundle / "Info.plist").write_bytes(plistlib.dumps(bundle_info))
         subprocess.run(["cp", "-cR", str(products / "Signal.app/Frameworks"), str(work / "Frameworks")], check=True)
         command = ["xcrun", "--sdk", "iphonesimulator", "swiftc", "-target", "arm64-apple-ios27.0-simulator", "-sdk", sdk,
@@ -71,7 +86,10 @@ def main():
                   "install-commit-crash", "verify-installed", "local-crash", "verify-installed",
                   "local-commit-crash", "verify-local", "retry-local", "verify-local",
                   "entropy-crash", "verify-local", "entropy-commit-crash", "verify-entropy",
-                  "retry-entropy", "verify-entropy"]
+                  "retry-entropy", "verify-entropy",
+                  "publication-crash", "verify-unpublished", "publication-commit-crash", "verify-prepared",
+                  "dispatch-crash", "verify-prepared", "dispatch-commit-crash", "verify-dispatched",
+                  "ack-crash", "verify-dispatched", "ack-commit-crash", "verify-attributes"]
         marker = Path(str(database) + ".kill-point")
         for phase in phases:
             marker.unlink(missing_ok=True)
@@ -86,7 +104,7 @@ def main():
                 print(f"PASS {phase}: deliberate SIGKILL observed", flush=True)
             else:
                 result.check_returncode()
-        print("18 encrypted-file process phases passed; six verified SIGKILL boundaries; no service readiness release")
+        print("30 encrypted-file process phases passed; twelve verified SIGKILL boundaries; no service readiness release")
 
 if __name__ == "__main__":
     main()

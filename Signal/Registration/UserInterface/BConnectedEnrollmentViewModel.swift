@@ -51,6 +51,11 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         communityProgress?.member?.status == .approved && progress?.hasApprovedIntentBinding != true
             && (communityProgress?.intentRetryNotBefore.map { Date() >= $0 } ?? true)
     }
+    var mayPublishAccount: Bool {
+        coordinator?.supportsAccountPublication == true && memberAllowsVerification && progress?.lastObservation?.state == .active
+            && progress?.accountEntropyPrepared == true
+            && progress?.accountPublicationComplete != true
+    }
 
     var title: String {
         guard initialRegistration else { return "Account setup unavailable" }
@@ -95,7 +100,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         case .active: return progress.nativeAccountInstalled
             ? (progress.localAccountPrepared
                 ? (progress.accountEntropyPrepared
-                    ? "This iPhone's account and local setup are saved. Messaging will become available when the remaining services are ready."
+                    ? (progress.accountPublicationComplete
+                        ? "Your saved profile was accepted by the server. Messaging will become available when the remaining services are ready."
+                        : "This iPhone's local setup is saved. Publish your saved profile when the service is available to continue.")
                     : "This iPhone's account is saved. Finish local setup to continue.")
                 : "This iPhone's account and keys are saved. Prepare the local account to continue setup.")
             : "The server confirmed this account. Save the verified account and its original keys on this iPhone to continue setup."
@@ -159,6 +166,18 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         busy = true; defer { busy = false }
         do { try coordinator.prepareAccountEntropy(); progress = try coordinator.progress(); message = nil }
         catch { message = "Local setup could not be confirmed. Your saved account and keys have been kept. Contact the alumni administrator." }
+    }
+
+    func publishAccount(explicitRetry: Bool = false) {
+        guard !busy, mayPublishAccount, let coordinator else { return }
+        busy = true; message = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do { try await coordinator.publishAccount(explicitlyRetryUncertainOutcome: explicitRetry) }
+            catch { message = "Profile publication could not be confirmed. Your saved account, profile and publication request have been kept. Check status before explicitly retrying." }
+            do { progress = try coordinator.progress() }
+            catch { message = "Saved signup state could not be read. No new attempt will be created." }
+        }
     }
 
     func installNativeAccount() {

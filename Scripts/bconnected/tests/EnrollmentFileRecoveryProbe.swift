@@ -77,6 +77,12 @@ func validate(_ record: BConnectedEnrollmentRecord, _ account: BConnectedEnrollm
     try manager.validateBConnectedInstallation(.init(record: record, account: account), repeated: true, tx: tx)
 }
 
+let publicationConfiguration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+func publication(_ tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
+    try BConnectedLocalAccountSetup.preparePublication(tx: tx, configuration: publicationConfiguration,
+        accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), sharePhoneNumber: false, validateNative: validate)
+}
+
 switch mode {
 case "initialize":
     let profileKey = Aes256Key.generateRandom()
@@ -178,5 +184,48 @@ case "entropy-crash", "entropy-commit-crash":
         if mode == "entropy-crash" { crash() }
     }
     crash()
+case "publication-crash", "publication-commit-crash":
+    try write { tx in
+        var record = try readRecord(tx)
+        record.observation = .init(operationId: record.operationId!, state: .active, registrationAuthorized: true,
+            phoneVerified: true, nextSmsSeconds: nil, nextCheckSeconds: nil, expiresInSeconds: nil, account: record.installedAccount)
+        enrollment.setData(try JSONEncoder().encode(record), key: "attempt", transaction: tx)
+        let prepared = try publication(tx).publication!
+        evidence.setData(prepared.encryptedProfile, key: "frozen-profile", transaction: tx)
+        evidence.setData(prepared.accountAttributes, key: "frozen-attributes", transaction: tx)
+        if mode == "publication-crash" { crash() }
+    }
+    crash()
+case "dispatch-crash", "dispatch-commit-crash", "ack-crash", "ack-commit-crash":
+    try write { tx in
+        let record = try publication(tx)
+        _ = try BConnectedLocalAccountSetup.transitionPublication(record: record, expected: record,
+            step: .attributes, acknowledge: mode.hasPrefix("ack"), tx: tx)
+        hidden(tx)
+        if !mode.contains("commit") { crash() }
+    }
+    crash()
+case "verify-unpublished", "verify-prepared", "verify-dispatched", "verify-attributes":
+    try write { tx in
+        hidden(tx)
+        let record = try readRecord(tx)
+        let original = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: evidence.getData("original", transaction: tx)!)
+        precondition(record.password == original.password && record.aci.pair == original.aci.pair && record.pni.pair == original.pni.pair)
+        precondition(record.registrationRequest == original.registrationRequest && record.keyCommitment == original.keyCommitment)
+        if mode == "verify-unpublished" {
+            precondition(record.publication == nil && evidence.getData("frozen-profile", transaction: tx) == nil)
+            try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx, accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), validateNative: validate)
+        } else {
+            let before = try Int.fetchOne(tx.database, sql: "SELECT total_changes()")!
+            let reloaded = try publication(tx)
+            try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
+            let ledger = reloaded.publication!
+            precondition(ledger.encryptedProfile == evidence.getData("frozen-profile", transaction: tx))
+            precondition(ledger.accountAttributes == evidence.getData("frozen-attributes", transaction: tx))
+            let expected: BConnectedEnrollmentRecord.Publication.State = mode == "verify-prepared" ? .prepared : mode == "verify-dispatched" ? .dispatched : .acknowledged
+            precondition(ledger.attributesState == expected && ledger.profileState == .prepared && !ledger.complete)
+        }
+    }
+    print("PASS \(mode) fresh process preserves frozen publication bytes, expected dispatch/ack state, native material and readiness barrier")
 default: preconditionFailure("unknown probe mode")
 }

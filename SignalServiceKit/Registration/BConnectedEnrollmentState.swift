@@ -39,6 +39,8 @@ public struct BConnectedEnrollmentProgress {
     public let nativeAccountInstalled: Bool
     public let localAccountPrepared: Bool
     public let accountEntropyPrepared: Bool
+    public let accountPublicationComplete: Bool
+    public let accountPublicationNeedsExplicitRetry: Bool
 }
 
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
@@ -90,6 +92,26 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     var installedAccount: BConnectedEnrollmentObservation.Account?
     var localSetupReceipt: LocalSetupReceipt?
     var accountEntropyReceipt: AccountEntropyReceipt?
+    var publication: Publication?
+
+    struct Publication: Codable, Equatable {
+        enum State: String, Codable { case prepared, dispatched, acknowledged }
+        let version: Int
+        let configurationHash: Data
+        let entropyReceipt: AccountEntropyReceipt
+        let profileStateHash: Data
+        let accountAttributes: Data
+        let encryptedProfile: Data
+        let payloadHash: Data
+        var attributesState: State = .prepared
+        var profileState: State = .prepared
+        var complete: Bool { attributesState == .acknowledged && profileState == .acknowledged }
+        var uncertain: Bool { attributesState == .dispatched || profileState == .dispatched }
+        func state(for step: BConnectedPublicationStep) -> State { step == .attributes ? attributesState : profileState }
+        static func hash(attributes: Data, profile: Data) -> Data {
+            Data(SHA256.hash(data: Data(SHA256.hash(data: attributes)) + Data(SHA256.hash(data: profile))))
+        }
+    }
 
     struct AccountEntropyReceipt: Codable, Equatable {
         let version: Int
@@ -172,6 +194,34 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
                 throw BConnectedEnrollmentError.persistenceUnavailable
             }
         }
+        if let publication {
+            guard publication.version == 1, publication.configurationHash.count == 32,
+                  publication.entropyReceipt == accountEntropyReceipt, publication.profileStateHash.count == 32,
+                  publication.payloadHash == Publication.hash(attributes: publication.accountAttributes, profile: publication.encryptedProfile),
+                  publication.profileState == .prepared || publication.attributesState == .acknowledged,
+                  let attributes = request["accountAttributes"] as? [String: Any],
+                  publication.accountAttributes == (try BConnectedEnrollmentWire.encode(attributes)) else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+            let profile = try BConnectedEnrollmentWire.object(publication.encryptedProfile)
+            guard Set(profile.keys).isSubset(of: ["name", "about", "aboutEmoji", "avatar", "sameAvatar", "badgeIds", "commitment", "phoneNumberSharing", "version"]),
+                  profile["avatar"] as? Bool == true, profile["sameAvatar"] as? Bool == true,
+                  (profile["badgeIds"] as? [String])?.isEmpty == true,
+                  let profileVersion = profile["version"] as? String, profileVersion.count == 64,
+                  profileVersion.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+            let commitment = try BConnectedEnrollmentWire.base64(profile["commitment"])
+            guard try ProfileKeyCommitment(contents: commitment).serialize() == commitment,
+                  try BConnectedEnrollmentWire.base64(profile["phoneNumberSharing"]).count == 29 else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+            for (field, sizes) in [("name", [81, 285]), ("about", [156, 282, 540]), ("aboutEmoji", [60])] {
+                if let value = profile[field], !sizes.contains(try BConnectedEnrollmentWire.base64(value).count) {
+                    throw BConnectedEnrollmentError.persistenceUnavailable
+                }
+            }
+        }
     }
 
     func body(for operation: BConnectedEnrollmentOperation, code: String?) throws -> Data {
@@ -198,6 +248,8 @@ protocol BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { get }
     func prepareLocalAccount() throws
     func prepareAccountEntropy() throws
+    func preparePublication(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord
+    func transitionPublication(expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, acknowledge: Bool) throws -> BConnectedEnrollmentRecord
     /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws
 }
@@ -206,6 +258,8 @@ extension BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { false }
     func prepareLocalAccount() throws { throw BConnectedEnrollmentError.unavailable }
     func prepareAccountEntropy() throws { throw BConnectedEnrollmentError.unavailable }
+    func preparePublication(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
+    func transitionPublication(expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, acknowledge: Bool) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
         throw BConnectedEnrollmentError.unavailable
     }
@@ -216,10 +270,15 @@ extension BConnectedEnrollmentPersistence {
 public final class BConnectedEnrollmentCoordinator {
     private let persistence: any BConnectedEnrollmentPersistence
     private let client: any BConnectedEnrollmentSending
+    private let publicationConfiguration: BConnectedPublicationConfiguration?
+    private let publisher: (any BConnectedPublicationSending)?
     private var inFlight = false
+    public var supportsAccountPublication: Bool { publicationConfiguration != nil && publisher != nil && persistence.supportsNativeInstallation }
 
-    init(persistence: any BConnectedEnrollmentPersistence, client: any BConnectedEnrollmentSending) {
+    init(persistence: any BConnectedEnrollmentPersistence, client: any BConnectedEnrollmentSending,
+         publicationConfiguration: BConnectedPublicationConfiguration? = nil, publisher: (any BConnectedPublicationSending)? = nil) {
         self.persistence = persistence; self.client = client
+        self.publicationConfiguration = publicationConfiguration; self.publisher = publisher
     }
 
     /// First call commits secrets and public request; subsequent calls reuse them, including original metadata.
@@ -241,7 +300,9 @@ public final class BConnectedEnrollmentCoordinator {
                          hasApprovedIntentBinding: record.binding != nil, hasOperation: record.operationId != nil,
                          smsOutcomeNeedsExplicitDecision: record.sendNeedsExplicitDecision, lastObservation: record.observation,
                          nativeAccountInstalled: record.installedAccount != nil, localAccountPrepared: record.localSetupReceipt != nil,
-                         accountEntropyPrepared: record.accountEntropyReceipt != nil)
+                         accountEntropyPrepared: record.accountEntropyReceipt != nil,
+                         accountPublicationComplete: record.publication?.complete == true,
+                         accountPublicationNeedsExplicitRetry: record.publication?.uncertain == true)
         }
     }
 
@@ -277,6 +338,31 @@ public final class BConnectedEnrollmentCoordinator {
         guard persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
         inFlight = true; defer { inFlight = false }
         try persistence.prepareAccountEntropy()
+    }
+
+    /// Explicit, bounded publication while the ordinary account reader still withholds credentials.
+    /// A persisted dispatch marker survives every failure. Replays require an explicit decision.
+    public func publishAccount(explicitlyRetryUncertainOutcome: Bool = false) async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard let configuration = publicationConfiguration, let publisher,
+              persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        let status = try await performUnlocked(.status, code: nil, explicitlyResendAfterUncertainOutcome: false)
+        guard status.state == .active, status.registrationAuthorized == true else { throw BConnectedEnrollmentError.immutableConflict }
+        var record = try persistence.preparePublication(configuration: configuration)
+        guard status.account == record.installedAccount else { throw BConnectedEnrollmentError.immutableConflict }
+        for step in [BConnectedPublicationStep.attributes, .profile] {
+            guard let publication = record.publication else { throw BConnectedEnrollmentError.persistenceUnavailable }
+            if publication.state(for: step) == .acknowledged { continue }
+            if publication.state(for: step) == .dispatched && !explicitlyRetryUncertainOutcome {
+                throw BConnectedEnrollmentError.explicitPublicationRetryRequired
+            }
+            record = try persistence.transitionPublication(expected: record, step: step, acknowledge: false)
+            try Task.checkCancellation()
+            try await publisher.send(step, record: record, configuration: configuration)
+            record = try persistence.transitionPublication(expected: record, step: step, acknowledge: true)
+        }
+        // Publication acknowledgement is not a services-ready capability or registration event.
     }
 
     /// A persisted active observation is not authorization to install. Always fetch fresh status.

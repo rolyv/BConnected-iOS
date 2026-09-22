@@ -20,6 +20,7 @@ struct BConnectedEnrollmentView: View {
     @ObservedObject var model: BConnectedEnrollmentViewModel
     @State private var confirmResend = false
     @State private var confirmIntentRetry = false
+    @State private var confirmPublicationRetry = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -71,6 +72,12 @@ struct BConnectedEnrollmentView: View {
                     if progress.localAccountPrepared && !progress.accountEntropyPrepared {
                         Button("Finish local setup") { model.prepareAccountEntropy() }
                     }
+                    if model.mayPublishAccount {
+                        Button(progress.accountPublicationNeedsExplicitRetry ? "Retry saved profile publication…" : "Publish saved profile") {
+                            if progress.accountPublicationNeedsExplicitRetry { confirmPublicationRetry = true }
+                            else { model.publishAccount() }
+                        }
+                    }
                     if progress.hasOperation { Button("Check status") { model.perform(.status) } }
                 }
                 if model.busy { ProgressView() }
@@ -79,6 +86,10 @@ struct BConnectedEnrollmentView: View {
             .padding(24).disabled(model.busy)
         }
         .navigationBarBackButtonHidden(true)
+        .confirmationDialog("The server may already have accepted this setup request. Send the same saved request again?", isPresented: $confirmPublicationRetry) {
+            Button("Retry saved publication") { model.publishAccount(explicitRetry: true) }
+            Button("Cancel", role: .cancel) {}
+        }
         .confirmationDialog("Request a new approval binding after the previous request's waiting period?", isPresented: $confirmIntentRetry) {
             Button("Retry approval binding") { model.connectMembership(explicitRetry: true) }
             Button("Cancel", role: .cancel) {}

@@ -40,7 +40,9 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
     /// calling this; creating it neither enables legacy registration nor completes the local account.
     @MainActor
     public func makeBConnectedEnrollmentCoordinator(endpoint: BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator {
-        BConnectedEnrollmentCoordinator(db: deps.db, endpoint: endpoint, nativeInstaller: deps.bconnectedNativeInstaller, accountKeyStore: deps.accountKeyStore)
+        BConnectedEnrollmentCoordinator(db: deps.db, endpoint: endpoint, nativeInstaller: deps.bconnectedNativeInstaller, accountKeyStore: deps.accountKeyStore,
+            publicationConfiguration: try? BConnectedPublicationConfiguration(info: Bundle.main.infoDictionary ?? [:]),
+            udManager: SSKEnvironment.shared.udManagerRef)
     }
 
     @MainActor

@@ -15,6 +15,8 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         model.perform(.begin)
         model.apply()
         model.connectMembership()
+        model.publishAccount()
+        XCTAssertFalse(model.mayPublishAccount)
         XCTAssertNil(model.progress)
         XCTAssertNil(model.communityProgress)
         XCTAssertFalse(model.canApply)
@@ -32,6 +34,8 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
             }
             model.perform(.begin)
             model.perform(.sendCode)
+            model.publishAccount()
+            XCTAssertFalse(model.mayPublishAccount)
             XCTAssertEqual(constructions, 0)
             XCTAssertFalse(model.busy)
             XCTAssertNil(model.progress)

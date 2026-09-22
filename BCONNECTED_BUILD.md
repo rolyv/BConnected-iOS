@@ -158,3 +158,31 @@ python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-sim
 ```
 
 The driver accepts only a bounded public-only binary parameters file and supplies the synthetic sender root solely inside its temporary test bundle. Do not point it at a whole server configuration or a secret. Real owned sender roots still require authoritative verification and explicit app/extension configuration, along with final verified endpoint/port/TLS inputs, service routing, profile/account publication, readiness lifecycle and pilot/device acceptance. Pending-services and the normal backend release guard remain intact.
+
+## Durable pending account/profile publisher (services still gated)
+
+The signup coordinator now has a bounded, explicit publication action after native installation, exact self-recipient setup and account entropy. It obtains fresh owned enrollment status, revalidates the installed native material/profile/UAK/recipient/entropy, and freezes the original account attributes and a native encrypted profile in SQLCipher. It uses the existing local profile name/key and phone-sharing preference; it does not apply the community enrollment display name or rotate keys. Native profile commitment/version and exact encrypted field sizes are validated. Avatar state is preserved (`avatar: true`, `sameAvatar: true`); this action does not upload an avatar or publish one-time prekeys.
+
+The durable ledger binds the attempt's entropy receipt, canonical publication origin/public authorities, local profile state and exact payload bytes. Attribute publication precedes profile publication. Each dispatch marker commits before the request, and each acknowledgement commits afterward. A cancellation, response loss or acknowledgement-persistence failure retains the uncertain marker. The user must explicitly choose replay; replay uses the identical frozen bytes and fresh HTTP authentication. Changed prerequisites, stale transaction snapshots, a suspension, malformed state or an endpoint/authority change fail closed. There is no automatic retry or fallback.
+
+Actual signup composition requires all of these separate inputs; no values are populated in app/extension bundles by this change:
+
+- `BConnectedAccountPublicationOrigin`: an explicit HTTPS DNS origin, with optional port and no path, credentials, query or fragment. Upstream Signal origins are rejected.
+- `BConnectedAccountPublicationTrust`: exactly `system`. A certificate override is not supported, and a supplied `BConnectedAccountPublicationCertificateDERBase64` rejects configuration.
+- The native-validated `BConnectedGroupPublicParamsBase64` and `BConnectedSenderCertificateTrustRootsBase64` described above.
+
+The dedicated ephemeral URLSession uses the saved pending account only for Basic authentication to the exact configured origin. It disables cookies, credentials/cache storage and redirects, bounds responses, and never resolves ordinary registered-account credentials or invokes the upstream registration lifecycle. The only routes are `PUT /v1/accounts/attributes/` (empty 204) and `PUT /v1/profile` (empty 200). Attributes omit recoveryPassword, registrationLock and device name. HTTP acknowledgements only advance this ledger: account readers still hide credentials/identifiers, navigation stays in setup, and no services-ready capability or registration notification is created.
+
+Validation on 2026-09-22: the actual unsigned app/extensions/framework compile-validation graph succeeded. **41 exact-source host tests** passed (30 enrollment/community/lifecycle, two actual app view-model and nine native cryptography). Cases cover frozen replay, dispatch-before-send, lost acknowledgement, suspension, missing/unsafe configuration, malformed native profile data, exact routes and response contracts, and the real URLSession redirect/body bounds. The standalone actual-framework local probe now has **15 SQLCipher groups**, including real profile encryption/decryption, commitment/version, publication draft/dispatch/ack rollback, stale snapshots, zero-write replay, changed native/profile/authority prerequisites, no completion callbacks and unchanged readiness. The encrypted-file probe now has **30 fresh-process phases and twelve verified SIGKILL boundaries**, including publication preparation, dispatch and acknowledgement before/after commit. Reopened WAL records retain exact payloads and uncertainty. The same full-installer, Keychain/file-protection, power-loss, provider and device-acceptance limitations described above remain.
+
+The public-authority probe also accepts an optional exact public-only artifact:
+
+```sh
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID> \
+  --probe cryptographic-inputs --group-public-params-file /path/to/public-only-params.bin \
+  --public-authorities-file /path/to/public-only-authorities.json
+```
+
+Its permitted JSON fields are `senderCertificate`, `senderTrustRoot`, `senderCertificateId` and `groupsServerPublic`. The reviewed local artifact's group parameters and signer certificate exactly matched the packaged server configuration's public fields. Native libsignal parsed its 105-byte `ServerCertificate`, matched its ID and verified its signature under the separate 33-byte public root; a tampered signature rejected. Real `TSConstants`, `GroupsV2Protos` and UD consumers used these inputs. Root SHA-256: `87e296effc0d9e08bd89ee7daa591290c21e79a068a64b8dba97693595085d3d`; certificate SHA-256: `97bc993090113fd26748b44988f99328fbef66609d141c772f678393d1490bb2`. This proves the stated public chain and consumer selection, not live server delivery, a per-account SenderCertificate, deployment trust acceptance or device messaging. No private key is read by this probe.
+
+No live account/profile publication was attempted: corresponding backend use-time membership/admission mutation checks remain a release prerequisite. One-time key publication, community-name application, complete owned Groups/Stories/media/service routing, services-ready lifecycle/navigation, explicit deployment configuration and device acceptance remain outstanding. Normal-build and pending-services guards stay closed; no real SMS/APNs, upstream service or libsignal archive rebuild occurs in this checkpoint.
