@@ -148,4 +148,105 @@ do { try changedProfile.prepare(); preconditionFailure("changed profile key acce
 catch BConnectedEnrollmentError.immutableConflict {}
 precondition(changedProfile.changes() == beforeProfile && changedProfile.rowCount() == 0)
 print("PASS profile key mismatch is terminal before recipient or receipt mutation")
-print("6 real local-setup database probe groups passed; no remote service or readiness effects")
+
+func entropy(_ fixture: Fixture) throws {
+    try fixture.db.writeWithRollbackIfThrows { tx in
+        try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx,
+            accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), validateNative: fixture.validate)
+        precondition(tx.completionBlocks.isEmpty, "entropy setup must not schedule logging/lifecycle effects")
+    }
+}
+func entropyKey(_ fixture: Fixture) -> String? {
+    fixture.db.read { NewKeyValueStore(collection: "AccountEntropyPool").fetchValue(String.self, forKey: "aep", tx: $0) }
+}
+let entropyFirst = try Fixture()
+let beforeMissingLocal = entropyFirst.changes()
+do { try entropy(entropyFirst); preconditionFailure("entropy accepted before local setup") }
+catch BConnectedEnrollmentError.immutableConflict {}
+precondition(entropyFirst.changes() == beforeMissingLocal && entropyKey(entropyFirst) == nil)
+try entropyFirst.prepare()
+try entropy(entropyFirst)
+let savedEntropy = try entropyFirst.saved().accountEntropyReceipt!
+let savedKey = entropyKey(entropyFirst)!
+precondition(LibSignalClient.AccountEntropyPool.isValid(savedKey) && savedEntropy.entropyHash.count == 32)
+let beforeEntropyRetry = entropyFirst.changes()
+try entropy(entropyFirst) // Constructs a new AccountKeyStore; reads the committed key and receipt.
+precondition(entropyFirst.changes() == beforeEntropyRetry && entropyKey(entropyFirst) == savedKey)
+let repeatedEntropy = try entropyFirst.saved().accountEntropyReceipt
+precondition(repeatedEntropy == savedEntropy)
+entropyFirst.unchangedProfileAndBarrier()
+print("PASS entropy requires local setup; first write and read-only retry preserve original keys/profile and pending-services with no completion callbacks")
+
+let entropyRollback = try Fixture()
+try entropyRollback.prepare()
+do {
+    try entropyRollback.db.writeWithRollbackIfThrows { tx in
+        try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx,
+            accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), validateNative: entropyRollback.validate)
+        precondition(tx.completionBlocks.isEmpty)
+        throw Injected.rollback
+    }
+} catch Injected.rollback {}
+let rolledBackEntropy = try entropyRollback.saved().accountEntropyReceipt
+precondition(rolledBackEntropy == nil && entropyKey(entropyRollback) == nil)
+try entropy(entropyRollback)
+entropyRollback.unchangedProfileAndBarrier()
+print("PASS rollback removes native entropy and its receipt together; a later first-install retry succeeds")
+
+for kind in 0..<7 {
+    let conflict = try Fixture()
+    try conflict.prepare()
+    conflict.db.write { tx in
+        switch kind {
+        case 0: NewKeyValueStore(collection: "AccountEntropyPool").writeValue(LibSignalClient.AccountEntropyPool.generate(), forKey: "aep", tx: tx)
+        case 1: NewKeyValueStore(collection: "AccountEntropyPool").writeValue("malformed", forKey: "aep", tx: tx)
+        case 2: NewKeyValueStore(collection: "AccountEntropyPool").writeValue(Data([1]), forKey: "unknown", tx: tx)
+        case 3: NewKeyValueStore(collection: "MediaRootBackupKey").writeValue(Data(repeating: 1, count: 32), forKey: "mrbk", tx: tx)
+        case 4: NewKeyValueStore(collection: "AccountKey.Sync").writeValue(true, forKey: "isWaitingForKeysSync", tx: tx)
+        case 5: NewKeyValueStore(collection: "BackupSettingsStore").writeValue(Data([1]), forKey: "unknown", tx: tx)
+        default: NewKeyValueStore(collection: "LocalFileBackups").writeValue(true, forKey: "isEnabledKey", tx: tx)
+        }
+    }
+    let before = conflict.changes()
+    do { try entropy(conflict); preconditionFailure("foreign/partial entropy or backup state accepted") }
+    catch BConnectedEnrollmentError.immutableConflict {}
+    precondition(conflict.changes() == before)
+    let rejected = try conflict.saved().accountEntropyReceipt
+    precondition(rejected == nil)
+}
+print("PASS seven foreign/malformed/partial entropy, backup and sync states reject before mutation")
+
+for replace in [false, true] {
+    let changed = try Fixture()
+    try changed.prepare(); try entropy(changed)
+    changed.db.write { tx in
+        let store = NewKeyValueStore(collection: "AccountEntropyPool")
+        if replace { store.writeValue(LibSignalClient.AccountEntropyPool.generate(), forKey: "aep", tx: tx) }
+        else { store.removeValue(forKey: "aep", tx: tx) }
+    }
+    let before = changed.changes()
+    do { try entropy(changed); preconditionFailure("missing/changed committed entropy accepted") }
+    catch BConnectedEnrollmentError.immutableConflict {}
+    precondition(changed.changes() == before)
+}
+print("PASS missing or changed committed entropy cannot be regenerated or accepted on retry")
+
+let blockedEntropy = try Fixture()
+try blockedEntropy.prepare()
+let blockedId = try blockedEntropy.saved().localSetupReceipt!.recipientId
+blockedEntropy.db.write { BlockedRecipientStore().setBlocked(true, recipientId: blockedId, tx: $0) }
+let beforeBlockedEntropy = blockedEntropy.changes()
+do { try entropy(blockedEntropy); preconditionFailure("entropy accepted after self-recipient block") }
+catch BConnectedEnrollmentError.immutableConflict {}
+precondition(blockedEntropy.changes() == beforeBlockedEntropy && entropyKey(blockedEntropy) == nil)
+print("PASS entropy setup revalidates the prior self-recipient receipt and preserves current blocks")
+
+var invalidEntropy = try entropyFirst.saved()
+invalidEntropy.accountEntropyReceipt = .init(version: 1, localSetup: savedEntropy.localSetup, entropyHash: Data([1]))
+do { try invalidEntropy.validate(); preconditionFailure("invalid entropy receipt accepted") }
+catch BConnectedEnrollmentError.persistenceUnavailable {}
+invalidEntropy = try entropyFirst.saved(); invalidEntropy.localSetupReceipt = nil
+do { try invalidEntropy.validate(); preconditionFailure("unbound entropy receipt accepted") }
+catch BConnectedEnrollmentError.persistenceUnavailable {}
+print("PASS malformed or unbound entropy receipt fails persisted-state validation")
+print("12 real local-account/entropy database probe groups passed; no remote service or readiness effects")

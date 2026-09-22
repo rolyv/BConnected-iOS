@@ -32,6 +32,34 @@ final class BConnectedEnrollmentTest: XCTestCase {
     }
 
     @MainActor
+    func testAccountEntropyRequiresLocalReceiptAndSendsNothingAcrossRestart() async throws {
+        let store = MemoryStore(), sender = Sender()
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        XCTAssertThrowsError(try coordinator.prepareAccountEntropy())
+        store.supportsNativeInstallation = true
+        _ = try coordinator.prepare(input())
+        XCTAssertThrowsError(try coordinator.prepareAccountEntropy())
+        try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
+        sender.result = try observation("active")
+        _ = try await coordinator.perform(.begin)
+        try await coordinator.installNativeAccount()
+        XCTAssertThrowsError(try coordinator.prepareAccountEntropy())
+        try coordinator.prepareLocalAccount()
+        let requests = sender.calls
+        store.failCommit = true
+        XCTAssertThrowsError(try coordinator.prepareAccountEntropy())
+        XCTAssertNil(try store.load()?.accountEntropyReceipt)
+        store.failCommit = false
+        try coordinator.prepareAccountEntropy()
+        XCTAssertTrue(try XCTUnwrap(coordinator.progress()).accountEntropyPrepared)
+        let receipt = try XCTUnwrap(store.load()?.accountEntropyReceipt)
+        let restarted = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        try restarted.prepareAccountEntropy()
+        XCTAssertEqual(try store.load()?.accountEntropyReceipt, receipt)
+        XCTAssertEqual(sender.calls, requests)
+    }
+
+    @MainActor
     func testLocalPreparationIsSeparateFromRemoteAuthorizationAndSendsNothing() async throws {
         let store = MemoryStore(), sender = Sender()
         store.supportsNativeInstallation = true
@@ -509,6 +537,14 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
     var supportsNativeInstallation = false
     var failInstall = false
     var installCount = 0
+    func prepareAccountEntropy() throws {
+        try transaction { record in
+            guard var value = record, let local = value.localSetupReceipt else { throw BConnectedEnrollmentError.immutableConflict }
+            if value.accountEntropyReceipt != nil { return }
+            value.accountEntropyReceipt = .init(version: 1, localSetup: local, entropyHash: Data(repeating: 1, count: 32))
+            record = value
+        }
+    }
     func prepareLocalAccount() throws {
         try transaction { record in
             guard var value = record, let account = value.installedAccount else { throw BConnectedEnrollmentError.immutableConflict }

@@ -116,7 +116,7 @@ case "install-crash", "install-commit-crash":
         if mode == "install-crash" { crash() }
     }
     crash() // Committed WAL; deliberately no normal DB close/checkpoint.
-case "verify-uninstalled", "verify-installed", "verify-local", "retry-local":
+case "verify-uninstalled", "verify-installed", "verify-local", "retry-local", "verify-entropy", "retry-entropy":
     try database.read { native in
         let tx = DBReadTransaction(database: native)
         hidden(tx)
@@ -138,15 +138,25 @@ case "verify-uninstalled", "verify-installed", "verify-local", "retry-local":
                 precondition(preKeys.forIdentity(identity).fetchPreKey(in: .kyber, for: kyber.id, tx: tx)?.serializedRecord == saved.lastResortPreKey)
             } else { precondition(!preKeys.forIdentity(identity).bconnectedHasAnyKeys(tx: tx)) }
         }
-        let local = mode == "verify-local" || mode == "retry-local"
+        let hasEntropy = mode == "verify-entropy" || mode == "retry-entropy"
+        let local = mode == "verify-local" || mode == "retry-local" || hasEntropy
         precondition((record.localSetupReceipt != nil) == local)
+        precondition((record.accountEntropyReceipt != nil) == hasEntropy)
+        let entropy = NewKeyValueStore(collection: "AccountEntropyPool").fetchValue(String.self, forKey: "aep", tx: tx)
+        precondition((entropy != nil) == hasEntropy)
+        if let entropy { precondition(LibSignalClient.AccountEntropyPool.isValid(entropy)) }
         try check(SignalRecipient.fetchCount(native) == (local ? 1 : 0))
     }
-    if mode == "retry-local" {
+    if mode == "retry-local" || mode == "retry-entropy" || mode == "verify-entropy" {
         try write { tx in
             let before = try Int.fetchOne(tx.database, sql: "SELECT total_changes()")!
             let bytes = enrollment.getData("attempt", transaction: tx)
-            try BConnectedLocalAccountSetup.prepare(tx: tx, validateNative: validate)
+            if mode == "retry-local" {
+                try BConnectedLocalAccountSetup.prepare(tx: tx, validateNative: validate)
+            } else {
+                try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx,
+                    accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), validateNative: validate)
+            }
             try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
             precondition(enrollment.getData("attempt", transaction: tx) == bytes)
         }
@@ -158,6 +168,14 @@ case "local-crash", "local-commit-crash":
         try check(SignalRecipient.fetchCount(tx.database) == 1)
         try check(readRecord(tx).localSetupReceipt != nil)
         if mode == "local-crash" { crash() }
+    }
+    crash()
+case "entropy-crash", "entropy-commit-crash":
+    try write { tx in
+        try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx,
+            accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), validateNative: validate)
+        try check(readRecord(tx).accountEntropyReceipt != nil)
+        if mode == "entropy-crash" { crash() }
     }
     crash()
 default: preconditionFailure("unknown probe mode")

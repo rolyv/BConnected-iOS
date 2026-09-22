@@ -8,10 +8,20 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     private let db: any DB
     private let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
     private let nativeInstaller: BConnectedNativeAccountInstaller?
-    init(db: any DB, nativeInstaller: BConnectedNativeAccountInstaller? = nil) {
-        self.db = db; self.nativeInstaller = nativeInstaller
+    private let accountKeyStore: AccountKeyStore?
+    init(db: any DB, nativeInstaller: BConnectedNativeAccountInstaller? = nil, accountKeyStore: AccountKeyStore? = nil) {
+        self.db = db; self.nativeInstaller = nativeInstaller; self.accountKeyStore = accountKeyStore
     }
     var supportsNativeInstallation: Bool { nativeInstaller != nil }
+
+    func prepareAccountEntropy() throws {
+        guard let nativeInstaller, let accountKeyStore else { throw BConnectedEnrollmentError.unavailable }
+        try db.writeWithRollbackIfThrows { tx in
+            try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx, accountKeyStore: accountKeyStore) { record, account, tx in
+                _ = try nativeInstaller.prepare(record: record, account: account, tx: tx)
+            }
+        }
+    }
 
     func prepareLocalAccount() throws {
         guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
@@ -80,7 +90,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
 
 extension BConnectedEnrollmentCoordinator {
     /// Construction has no network effects and does not mark the upstream registration complete.
-    public convenience init(db: any DB, endpoint: BConnectedEnrollmentEndpoint, nativeInstaller: BConnectedNativeAccountInstaller? = nil) {
-        self.init(persistence: BConnectedEnrollmentStore(db: db, nativeInstaller: nativeInstaller), client: BConnectedEnrollmentClient(endpoint: endpoint))
+    public convenience init(db: any DB, endpoint: BConnectedEnrollmentEndpoint, nativeInstaller: BConnectedNativeAccountInstaller? = nil, accountKeyStore: AccountKeyStore? = nil) {
+        self.init(persistence: BConnectedEnrollmentStore(db: db, nativeInstaller: nativeInstaller, accountKeyStore: accountKeyStore), client: BConnectedEnrollmentClient(endpoint: endpoint))
     }
 }

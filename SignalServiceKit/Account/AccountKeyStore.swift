@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import CryptoKit
 public import LibSignalClient
 
 public class AccountKeyStore {
@@ -119,6 +120,37 @@ public class AccountKeyStore {
         tx.addSyncCompletion {
             DebugLogger.shared.setLoggingKey(loggingKey)
         }
+    }
+
+    /// Owned first-install prerequisite only. The caller must validate the pending native account
+    /// and local self-recipient, then atomically persist the returned hash receipt and this write.
+    /// No logging-key callback, backup ID mutation, key rotation, sync, recovery or network effects.
+    func prepareBConnectedInitialEntropy(expectedHash: Data?, tx: DBWriteTransaction) throws -> (hash: Data, install: () throws -> Void) {
+        guard try mrbkKvStore.fetchKeysOrThrow(tx: tx).isEmpty,
+              try syncStore.fetchKeysOrThrow(tx: tx).isEmpty,
+              try NewKeyValueStore(collection: "BackupSettingsStore").fetchKeysOrThrow(tx: tx).isEmpty,
+              try NewKeyValueStore(collection: "LocalFileBackups").fetchKeysOrThrow(tx: tx).isEmpty else {
+            throw BConnectedEnrollmentError.immutableConflict
+        }
+        let keys = try aepKvStore.fetchKeysOrThrow(tx: tx)
+        let entropy: AccountEntropyPool
+        if expectedHash != nil {
+            guard keys == [Keys.aepKeyName],
+                  let raw = try aepKvStore.fetchValueOrThrow(String.self, forKey: Keys.aepKeyName, tx: tx),
+                  let existing = try? AccountEntropyPool(key: raw), existing.rawString == raw else {
+                throw BConnectedEnrollmentError.immutableConflict
+            }
+            entropy = existing
+        } else {
+            guard keys.isEmpty else { throw BConnectedEnrollmentError.immutableConflict }
+            entropy = AccountEntropyPool()
+        }
+        let hash = Data(SHA256.hash(data: Data(("BConnected account entropy v1\0" + entropy.rawString).utf8)))
+        if let expectedHash {
+            guard hash == expectedHash else { throw BConnectedEnrollmentError.immutableConflict }
+            return (hash, {})
+        }
+        return (hash, { try self.aepKvStore.writeValueOrThrow(entropy.rawString, forKey: Keys.aepKeyName, tx: tx) })
     }
 
     // MARK: -

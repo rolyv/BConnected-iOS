@@ -68,6 +68,9 @@ struct BConnectedEnrollmentView: View {
                     if progress.nativeAccountInstalled && !progress.localAccountPrepared {
                         Button("Prepare local account") { model.prepareLocalAccount() }
                     }
+                    if progress.localAccountPrepared && !progress.accountEntropyPrepared {
+                        Button("Finish local setup") { model.prepareAccountEntropy() }
+                    }
                     if progress.hasOperation { Button("Check status") { model.perform(.status) } }
                 }
                 if model.busy { ProgressView() }

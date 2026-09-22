@@ -6,6 +6,34 @@ import GRDB
 /// First-install self-recipient preparation only. No merging, profile mutation, caches, completion
 /// callbacks, block clearing, storage service, networking, or registration-state publication.
 enum BConnectedLocalAccountSetup {
+    static func prepareAccountEntropy(
+        tx: DBWriteTransaction,
+        accountKeyStore: AccountKeyStore,
+        validateNative: (BConnectedEnrollmentRecord, BConnectedEnrollmentObservation.Account, DBWriteTransaction) throws -> Void
+    ) throws {
+        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        var record: BConnectedEnrollmentRecord
+        do {
+            guard let bytes = values.getData("attempt", transaction: tx) else { throw BConnectedEnrollmentError.missingAttempt }
+            record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
+            try record.validate()
+        } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
+        guard let localSetup = record.localSetupReceipt else { throw BConnectedEnrollmentError.immutableConflict }
+        // The existing receipt guarantees this is a validating, read-only retry. It rechecks
+        // native material, profile/UAK, exact self-recipient identity and current blocks.
+        try prepare(tx: tx, validateNative: validateNative)
+        let entropy = try accountKeyStore.prepareBConnectedInitialEntropy(expectedHash: record.accountEntropyReceipt?.entropyHash, tx: tx)
+        if record.accountEntropyReceipt != nil { return }
+        record.accountEntropyReceipt = .init(version: 1, localSetup: localSetup, entropyHash: entropy.hash)
+        try record.validate()
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        let bytes = try encoder.encode(record)
+        // Both native key and receipt writes belong to the caller's rollback-on-error transaction.
+        // Nothing escapes via caches or completion callbacks, including after rollback.
+        try entropy.install()
+        values.setData(bytes, key: "attempt", transaction: tx)
+    }
+
     static func prepare(
         db: any DB,
         validateNative: (BConnectedEnrollmentRecord, BConnectedEnrollmentObservation.Account, DBWriteTransaction) throws -> Void

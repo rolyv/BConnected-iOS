@@ -38,6 +38,7 @@ public struct BConnectedEnrollmentProgress {
     /// Installed locally, but deliberately not registered or messaging-ready.
     public let nativeAccountInstalled: Bool
     public let localAccountPrepared: Bool
+    public let accountEntropyPrepared: Bool
 }
 
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
@@ -88,6 +89,13 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     var observation: BConnectedEnrollmentObservation?
     var installedAccount: BConnectedEnrollmentObservation.Account?
     var localSetupReceipt: LocalSetupReceipt?
+    var accountEntropyReceipt: AccountEntropyReceipt?
+
+    struct AccountEntropyReceipt: Codable, Equatable {
+        let version: Int
+        let localSetup: LocalSetupReceipt
+        let entropyHash: Data
+    }
 
     struct LocalSetupReceipt: Codable, Equatable {
         let version: Int
@@ -159,6 +167,11 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
                   !receipt.recipientUniqueId.isEmpty, !receipt.profileUniqueId.isEmpty,
                   try receipt.profileAccessKeyHash == profileAccessKeyHash() else { throw BConnectedEnrollmentError.persistenceUnavailable }
         }
+        if let receipt = accountEntropyReceipt {
+            guard receipt.version == 1, receipt.localSetup == localSetupReceipt, receipt.entropyHash.count == 32 else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+        }
     }
 
     func body(for operation: BConnectedEnrollmentOperation, code: String?) throws -> Data {
@@ -184,6 +197,7 @@ protocol BConnectedEnrollmentPersistence {
     func transaction<T>(_ update: (inout BConnectedEnrollmentRecord?) throws -> T) throws -> T
     var supportsNativeInstallation: Bool { get }
     func prepareLocalAccount() throws
+    func prepareAccountEntropy() throws
     /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws
 }
@@ -191,6 +205,7 @@ protocol BConnectedEnrollmentPersistence {
 extension BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { false }
     func prepareLocalAccount() throws { throw BConnectedEnrollmentError.unavailable }
+    func prepareAccountEntropy() throws { throw BConnectedEnrollmentError.unavailable }
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
         throw BConnectedEnrollmentError.unavailable
     }
@@ -225,7 +240,8 @@ public final class BConnectedEnrollmentCoordinator {
             return .init(intent: .init(registrationAttemptId: record.attempt, keyCommitment: record.keyCommitment),
                          hasApprovedIntentBinding: record.binding != nil, hasOperation: record.operationId != nil,
                          smsOutcomeNeedsExplicitDecision: record.sendNeedsExplicitDecision, lastObservation: record.observation,
-                         nativeAccountInstalled: record.installedAccount != nil, localAccountPrepared: record.localSetupReceipt != nil)
+                         nativeAccountInstalled: record.installedAccount != nil, localAccountPrepared: record.localSetupReceipt != nil,
+                         accountEntropyPrepared: record.accountEntropyReceipt != nil)
         }
     }
 
@@ -253,6 +269,14 @@ public final class BConnectedEnrollmentCoordinator {
         guard persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
         inFlight = true; defer { inFlight = false }
         try persistence.prepareLocalAccount()
+    }
+
+    /// First-install local key setup. This never releases pending-services or publishes anything.
+    public func prepareAccountEntropy() throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        try persistence.prepareAccountEntropy()
     }
 
     /// A persisted active observation is not authorization to install. Always fetch fresh status.

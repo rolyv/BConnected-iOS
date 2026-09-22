@@ -55,7 +55,9 @@ def main():
             handle.write(secrets.token_bytes(48))
         phases = ["initialize", "wrong-key", "install-crash", "verify-uninstalled",
                   "install-commit-crash", "verify-installed", "local-crash", "verify-installed",
-                  "local-commit-crash", "verify-local", "retry-local", "verify-local"]
+                  "local-commit-crash", "verify-local", "retry-local", "verify-local",
+                  "entropy-crash", "verify-local", "entropy-commit-crash", "verify-entropy",
+                  "retry-entropy", "verify-entropy"]
         marker = Path(str(database) + ".kill-point")
         for phase in phases:
             marker.unlink(missing_ok=True)
@@ -70,7 +72,7 @@ def main():
                 print(f"PASS {phase}: deliberate SIGKILL observed", flush=True)
             else:
                 result.check_returncode()
-        print("12 encrypted-file process phases passed; four verified SIGKILL boundaries; no service readiness release")
+        print("18 encrypted-file process phases passed; six verified SIGKILL boundaries; no service readiness release")
 
 if __name__ == "__main__":
     main()
