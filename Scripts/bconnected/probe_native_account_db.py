@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--simulator", required=True, help="UUID of an already booted dedicated simulator")
-    parser.add_argument("--probe", choices=["native-account", "http-services"], default="native-account")
+    parser.add_argument("--probe", choices=["native-account", "http-services", "local-account"], default="native-account")
     args = parser.parse_args()
     if not os.environ.get("DEVELOPER_DIR"):
         parser.error("Set DEVELOPER_DIR to the reviewed Xcode installation")
@@ -37,7 +37,7 @@ def main():
             if directory.is_dir() and directory.suffix != ".framework":
                 command += ["-F", str(directory)]
         # Explicit main.swift makes this a standalone top-level test executable.
-        source = "NativeAccountDatabaseProbe.swift" if args.probe == "native-account" else "HTTPServiceFactoryProbe.swift"
+        source = {"native-account": "NativeAccountDatabaseProbe.swift", "http-services": "HTTPServiceFactoryProbe.swift", "local-account": "LocalAccountSetupProbe.swift"}[args.probe]
         (work / "main.swift").write_bytes((ROOT / "Scripts/bconnected/tests" / source).read_bytes())
         command += ["-Xcc", "-I" + str(ROOT / "Pods/Headers/Public"), "-o", str(bundle / "native-db"), str(work / "main.swift")]
         subprocess.run(command, check=True, timeout=120)

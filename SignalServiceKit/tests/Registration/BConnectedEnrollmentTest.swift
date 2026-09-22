@@ -32,6 +32,31 @@ final class BConnectedEnrollmentTest: XCTestCase {
     }
 
     @MainActor
+    func testLocalPreparationIsSeparateFromRemoteAuthorizationAndSendsNothing() async throws {
+        let store = MemoryStore(), sender = Sender()
+        store.supportsNativeInstallation = true
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        _ = try coordinator.prepare(input())
+        XCTAssertThrowsError(try coordinator.prepareLocalAccount())
+        XCTAssertTrue(sender.calls.isEmpty)
+        try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
+        sender.result = try observation("active")
+        _ = try await coordinator.perform(.begin)
+        try await coordinator.installNativeAccount()
+        let requests = sender.calls
+        let original = try XCTUnwrap(store.load())
+        try coordinator.prepareLocalAccount()
+        XCTAssertTrue(try XCTUnwrap(coordinator.progress()).localAccountPrepared)
+        let first = try store.load()?.localSetupReceipt
+        let restarted = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        try restarted.prepareLocalAccount()
+        XCTAssertEqual(try store.load()?.localSetupReceipt, first)
+        XCTAssertEqual(try store.load()?.password, original.password)
+        XCTAssertEqual(try store.load()?.registrationRequest, original.registrationRequest)
+        XCTAssertEqual(sender.calls, requests)
+    }
+
+    @MainActor
     func testNativeInstallRequiresFreshActiveStatusAndExactRestartMaterial() async throws {
         let store = MemoryStore(), sender = Sender()
         store.supportsNativeInstallation = true
@@ -484,6 +509,16 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
     var supportsNativeInstallation = false
     var failInstall = false
     var installCount = 0
+    func prepareLocalAccount() throws {
+        try transaction { record in
+            guard var value = record, let account = value.installedAccount else { throw BConnectedEnrollmentError.immutableConflict }
+            if value.localSetupReceipt != nil { return }
+            value.localSetupReceipt = .init(version: 1, attempt: value.attempt, keyCommitment: value.keyCommitment,
+                account: account, profileUniqueId: "profile-fixture", profileAccessKeyHash: try value.profileAccessKeyHash(),
+                recipientId: 1, recipientUniqueId: "recipient-fixture")
+            record = value
+        }
+    }
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
         if failInstall { throw BConnectedEnrollmentError.persistenceUnavailable }
         let fresh = try transaction { record in

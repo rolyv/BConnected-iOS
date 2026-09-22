@@ -3,6 +3,7 @@
 public import Foundation
 import LibSignalClient
 import Security
+import CryptoKit
 
 /// Inputs are frozen before the first community intent. APNs may be absent for manual-fetch tests.
 public struct BConnectedEnrollmentPreparation {
@@ -36,6 +37,7 @@ public struct BConnectedEnrollmentProgress {
     public let lastObservation: BConnectedEnrollmentObservation?
     /// Installed locally, but deliberately not registered or messaging-ready.
     public let nativeAccountInstalled: Bool
+    public let localAccountPrepared: Bool
 }
 
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
@@ -85,6 +87,24 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     var sendNeedsExplicitDecision = false
     var observation: BConnectedEnrollmentObservation?
     var installedAccount: BConnectedEnrollmentObservation.Account?
+    var localSetupReceipt: LocalSetupReceipt?
+
+    struct LocalSetupReceipt: Codable, Equatable {
+        let version: Int
+        let attempt: String
+        let keyCommitment: String
+        let account: BConnectedEnrollmentObservation.Account
+        let profileUniqueId: String
+        let profileAccessKeyHash: Data
+        let recipientId: Int64
+        let recipientUniqueId: String
+    }
+
+    func profileAccessKeyHash() throws -> Data {
+        let request = try BConnectedEnrollmentWire.object(registrationRequest)
+        guard let attributes = request["accountAttributes"] as? [String: Any] else { throw BConnectedEnrollmentError.persistenceUnavailable }
+        return Data(SHA256.hash(data: try BConnectedEnrollmentWire.base64(BConnectedEnrollmentWire.text(attributes["unidentifiedAccessKey"]))))
+    }
 
     struct Binding: Codable, Equatable { let memberId: String; let challenge: String }
     var description: String { "BConnectedEnrollmentRecord(redacted)" }
@@ -133,6 +153,12 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
             _ = try BConnectedEnrollmentWire.uuid(installedAccount.aci)
             _ = try BConnectedEnrollmentWire.uuid(installedAccount.pni)
         }
+        if let receipt = localSetupReceipt {
+            guard receipt.version == 1, receipt.attempt == attempt, receipt.keyCommitment == keyCommitment,
+                  receipt.account == installedAccount, receipt.recipientId > 0,
+                  !receipt.recipientUniqueId.isEmpty, !receipt.profileUniqueId.isEmpty,
+                  try receipt.profileAccessKeyHash == profileAccessKeyHash() else { throw BConnectedEnrollmentError.persistenceUnavailable }
+        }
     }
 
     func body(for operation: BConnectedEnrollmentOperation, code: String?) throws -> Data {
@@ -157,12 +183,14 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
 protocol BConnectedEnrollmentPersistence {
     func transaction<T>(_ update: (inout BConnectedEnrollmentRecord?) throws -> T) throws -> T
     var supportsNativeInstallation: Bool { get }
+    func prepareLocalAccount() throws
     /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws
 }
 
 extension BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { false }
+    func prepareLocalAccount() throws { throw BConnectedEnrollmentError.unavailable }
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
         throw BConnectedEnrollmentError.unavailable
     }
@@ -197,7 +225,7 @@ public final class BConnectedEnrollmentCoordinator {
             return .init(intent: .init(registrationAttemptId: record.attempt, keyCommitment: record.keyCommitment),
                          hasApprovedIntentBinding: record.binding != nil, hasOperation: record.operationId != nil,
                          smsOutcomeNeedsExplicitDecision: record.sendNeedsExplicitDecision, lastObservation: record.observation,
-                         nativeAccountInstalled: record.installedAccount != nil)
+                         nativeAccountInstalled: record.installedAccount != nil, localAccountPrepared: record.localSetupReceipt != nil)
         }
     }
 
@@ -217,6 +245,14 @@ public final class BConnectedEnrollmentCoordinator {
         guard !inFlight else { throw BConnectedEnrollmentError.busy }
         inFlight = true; defer { inFlight = false }
         return try await performUnlocked(operation, code: code, explicitlyResendAfterUncertainOutcome: explicitlyResendAfterUncertainOutcome)
+    }
+
+    /// Local-only preparation; never authorizes messaging or refreshes remote enrollment state.
+    public func prepareLocalAccount() throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        try persistence.prepareLocalAccount()
     }
 
     /// A persisted active observation is not authorization to install. Always fetch fresh status.

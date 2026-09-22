@@ -65,6 +65,9 @@ struct BConnectedEnrollmentView: View {
                     if model.memberAllowsVerification && progress.lastObservation?.state == .active && !progress.nativeAccountInstalled {
                         Button("Save account on this iPhone") { model.installNativeAccount() }
                     }
+                    if progress.nativeAccountInstalled && !progress.localAccountPrepared {
+                        Button("Prepare local account") { model.prepareLocalAccount() }
+                    }
                     if progress.hasOperation { Button("Check status") { model.perform(.status) } }
                 }
                 if model.busy { ProgressView() }

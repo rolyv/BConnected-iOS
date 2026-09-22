@@ -93,7 +93,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
                 : "Request a code, then enter it here. A code alone does not activate your account."
         case .pendingConfirmation: return "Your phone is verified. Messaging stays unavailable until membership and account confirmation finish."
         case .active: return progress.nativeAccountInstalled
-            ? "This iPhone's account and keys are saved. Messaging will become available when the remaining services are ready."
+            ? (progress.localAccountPrepared
+                ? "This iPhone's account and local setup are saved. Messaging will become available when the remaining services are ready."
+                : "This iPhone's account and keys are saved. Prepare the local account to continue setup.")
             : "The server confirmed this account. Save the verified account and its original keys on this iPhone to continue setup."
         case .suspended: return "This account cannot use messaging. Contact the alumni administrator."
         case nil: return "Start phone verification using your saved alumni approval. This step does not send a text message."
@@ -141,6 +143,13 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             do { communityProgress = try community?.progress(); progress = try coordinator?.progress() }
             catch { message = "Saved signup state could not be read. No new attempt will be created." }
         }
+    }
+
+    func prepareLocalAccount() {
+        guard !busy, let coordinator else { return }
+        busy = true; defer { busy = false }
+        do { try coordinator.prepareLocalAccount(); progress = try coordinator.progress(); message = nil }
+        catch { message = "Local setup could not be confirmed. Your original account and profile have been kept. Contact the alumni administrator." }
     }
 
     func installNativeAccount() {

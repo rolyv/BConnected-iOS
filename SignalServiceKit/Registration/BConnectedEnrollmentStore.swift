@@ -13,6 +13,15 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     }
     var supportsNativeInstallation: Bool { nativeInstaller != nil }
 
+    func prepareLocalAccount() throws {
+        guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
+        try BConnectedLocalAccountSetup.prepare(db: db) { record, account, tx in
+            // An installed-account receipt forces the native validator's exact-repeat path.
+            // Discard its no-op closure; this operation never reinstalls or rotates native keys.
+            _ = try nativeInstaller.prepare(record: record, account: account, tx: tx)
+        }
+    }
+
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
         guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
         try db.writeWithRollbackIfThrows { tx in
@@ -50,6 +59,10 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
                 try record?.validate()
             } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
             let existed = record != nil
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            let original: Data?
+            do { original = try record.map { try encoder.encode($0) } }
+            catch { throw BConnectedEnrollmentError.persistenceUnavailable }
             let result = try update(&record)
             do {
                 guard let record else {
@@ -57,8 +70,8 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
                     return result
                 }
                 try record.validate()
-                let bytes = try JSONEncoder().encode(record)
-                values.setData(bytes, key: "attempt", transaction: tx)
+                let bytes = try encoder.encode(record)
+                if bytes != original { values.setData(bytes, key: "attempt", transaction: tx) }
             } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
             return result
         }

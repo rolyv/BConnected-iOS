@@ -92,3 +92,18 @@ python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-sim
 ```
 
 This is a bounded factory/credential boundary, not a claim that all UI/background, profile publication, account attributes, media or extension paths are ready. Owned attribute publication must omit recoveryPassword under the one-iPhone pilot policy. No live origin, upstream fallback, services-ready transition or backend release flag is added.
+
+
+## Local self-recipient setup (services still gated)
+
+After native account installation, the setup screen offers a separate local-account preparation action. The production SQLCipher transaction revalidates native material, the existing profile key-derived access key and all candidate ACI/PNI/phone recipient records before its first write. It creates or reuses one exact primary self-recipient, then atomically saves a receipt bound to the original attempt, key commitment, installed account, profile identity/access-key hash and recipient row/unique ID. It preserves the profile key, access key and display name. Partial, split, mismatched, unregistered or blocked candidate recipients fail closed; no block is cleared.
+
+An exact repeat validates both receipt and native/recipient/profile state and writes nothing. The general enrollment store also avoids rewriting unchanged records. This slice calls no merge observers, remote services or omnibus registration lifecycle. It does not set account entropy, publish attributes/profile data, release pending-services, or complete navigation.
+
+Validation for this slice: the actual unsigned compile-validation workspace build succeeded; 32 focused host tests passed (21 enrollment/community/installation/local preparation, two app view-model, nine native crypto). The separate actual-framework SQLCipher in-memory probe has six groups covering first insert, byte-preserving read-only retry/store recreation, rollback after the recipient and receipt writes, six partial/split/device identity conflicts including separate ACI/PNI/phone rows, preservation of all blocks, exact-row reuse and changed-profile-key rejection. Cached and recreated account readers remain unregistered with credentials withheld.
+
+```sh
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID> --probe local-account
+```
+
+The probe invokes the production local setup transaction and real account staging validation. It does not instantiate the complete identity-manager dependency graph or test encrypted-file process-crash recovery; recreation means new store/account-reader objects over the same in-memory SQLCipher database. The app remains intentionally nonrunnable in compile-validation mode, and the pending-services and normal backend release guards remain intact.
