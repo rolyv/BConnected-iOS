@@ -34,6 +34,8 @@ public struct BConnectedEnrollmentProgress {
     public let hasOperation: Bool
     public let smsOutcomeNeedsExplicitDecision: Bool
     public let lastObservation: BConnectedEnrollmentObservation?
+    /// Installed locally, but deliberately not registered or messaging-ready.
+    public let nativeAccountInstalled: Bool
 }
 
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
@@ -82,6 +84,7 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     /// Written BEFORE any SMS dispatch. An unknown outcome requires an explicit user resend decision.
     var sendNeedsExplicitDecision = false
     var observation: BConnectedEnrollmentObservation?
+    var installedAccount: BConnectedEnrollmentObservation.Account?
 
     struct Binding: Codable, Equatable { let memberId: String; let challenge: String }
     var description: String { "BConnectedEnrollmentRecord(redacted)" }
@@ -125,6 +128,11 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
         if let binding { _ = try BConnectedEnrollmentWire.uuid(binding.memberId); _ = try BConnectedEnrollmentWire.nonce(binding.challenge) }
         if let operationId { _ = try BConnectedEnrollmentWire.uuid(operationId); guard binding != nil else { throw BConnectedEnrollmentError.persistenceUnavailable } }
         if let observation { guard observation.operationId == operationId else { throw BConnectedEnrollmentError.persistenceUnavailable } }
+        if let installedAccount {
+            guard operationId != nil, installedAccount.number == phone, installedAccount.deviceId == 1 else { throw BConnectedEnrollmentError.persistenceUnavailable }
+            _ = try BConnectedEnrollmentWire.uuid(installedAccount.aci)
+            _ = try BConnectedEnrollmentWire.uuid(installedAccount.pni)
+        }
     }
 
     func body(for operation: BConnectedEnrollmentOperation, code: String?) throws -> Data {
@@ -148,6 +156,16 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
 /// The transaction must commit before returning. Implementations must not swallow persistence errors.
 protocol BConnectedEnrollmentPersistence {
     func transaction<T>(_ update: (inout BConnectedEnrollmentRecord?) throws -> T) throws -> T
+    var supportsNativeInstallation: Bool { get }
+    /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
+    func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws
+}
+
+extension BConnectedEnrollmentPersistence {
+    var supportsNativeInstallation: Bool { false }
+    func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
+        throw BConnectedEnrollmentError.unavailable
+    }
 }
 
 /// Serial orchestration with durable immutable inputs; separate from native-account lifecycle completion.
@@ -178,7 +196,8 @@ public final class BConnectedEnrollmentCoordinator {
             try record.validate()
             return .init(intent: .init(registrationAttemptId: record.attempt, keyCommitment: record.keyCommitment),
                          hasApprovedIntentBinding: record.binding != nil, hasOperation: record.operationId != nil,
-                         smsOutcomeNeedsExplicitDecision: record.sendNeedsExplicitDecision, lastObservation: record.observation)
+                         smsOutcomeNeedsExplicitDecision: record.sendNeedsExplicitDecision, lastObservation: record.observation,
+                         nativeAccountInstalled: record.installedAccount != nil)
         }
     }
 
@@ -197,6 +216,31 @@ public final class BConnectedEnrollmentCoordinator {
                         explicitlyResendAfterUncertainOutcome: Bool = false) async throws -> BConnectedEnrollmentObservation {
         guard !inFlight else { throw BConnectedEnrollmentError.busy }
         inFlight = true; defer { inFlight = false }
+        return try await performUnlocked(operation, code: code, explicitlyResendAfterUncertainOutcome: explicitlyResendAfterUncertainOutcome)
+    }
+
+    /// A persisted active observation is not authorization to install. Always fetch fresh status.
+    /// This does not publish registration notifications, open chat, or return the registration .done step.
+    public func installNativeAccount() async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        let fresh = try await performUnlocked(.status)
+        guard fresh.state == .active, fresh.registrationAuthorized, let account = fresh.account else {
+            throw BConnectedEnrollmentError.unavailable
+        }
+        let snapshot = try persistence.transaction { record in
+            guard let record, record.observation == fresh, record.operationId == fresh.operationId,
+                  account.number == record.phone, account.deviceId == 1 else { throw BConnectedEnrollmentError.immutableConflict }
+            try record.validate()
+            guard record.installedAccount == nil || record.installedAccount == account else { throw BConnectedEnrollmentError.immutableConflict }
+            return record
+        }
+        try persistence.installNativeAccount(expected: snapshot, account: account)
+    }
+
+    private func performUnlocked(_ operation: BConnectedEnrollmentOperation, code: String? = nil,
+                                 explicitlyResendAfterUncertainOutcome: Bool = false) async throws -> BConnectedEnrollmentObservation {
         // Input validation and a durable SMS dispatch marker precede the first network effect.
         let snapshot = try persistence.transaction { record in
             guard var existing = record else { throw BConnectedEnrollmentError.missingAttempt }

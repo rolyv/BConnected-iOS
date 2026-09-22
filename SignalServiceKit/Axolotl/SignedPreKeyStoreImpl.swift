@@ -72,6 +72,19 @@ public class SignedPreKeyStoreImpl {
         )
     }
 
+    func prepareBConnectedInitialKey(_ record: LibSignalClient.SignedPreKeyRecord, tx: DBWriteTransaction) throws -> () -> Void {
+        let keyId: Data, rotationDate: Data
+        do {
+            keyId = try NSKeyedArchiver.archivedData(withRootObject: NSNumber(value: record.id), requiringSecureCoding: true)
+            rotationDate = try NSKeyedArchiver.archivedData(withRootObject: Date() as NSDate, requiringSecureCoding: true)
+        } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
+        return { [self] in
+            storeSignedPreKey(record, tx: tx)
+            metadataStore.setData(keyId, key: "TSStorageInternalSettingsNextPreKeyId", transaction: tx)
+            metadataStore.setData(rotationDate, key: lastPreKeyRotationDate, transaction: tx)
+        }
+    }
+
     func storeSignedPreKey(_ signedPreKey: LibSignalClient.SignedPreKeyRecord, tx: DBWriteTransaction) {
         preKeyStore.forIdentity(self.identity).upsertPreKeyRecord(
             signedPreKey.serialize(),

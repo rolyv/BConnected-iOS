@@ -335,6 +335,19 @@ public class OWSIdentityManagerImpl: OWSIdentityManager {
         ownIdentityKeyValueStore.setObject(keyPair, key: identity.persistenceKey, transaction: tx)
     }
 
+    /// Owned enrollment must report archive failures before its first transaction mutation.
+    /// Unlike the legacy setObject path, failure must never become a nil/deletion write.
+    func prepareBConnectedIdentityKeyPair(_ pair: ECKeyPair, for identity: OWSIdentity, tx: DBWriteTransaction) throws -> () -> Void {
+        let encoded: Data
+        do {
+            encoded = try NSKeyedArchiver.archivedData(withRootObject: pair, requiringSecureCoding: true)
+            guard try NSKeyedUnarchiver.unarchivedObject(ofClass: ECKeyPair.self, from: encoded)?.identityKeyPair.serialize() == pair.identityKeyPair.serialize() else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+        } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
+        return { self.ownIdentityKeyValueStore.setData(encoded, key: identity.persistenceKey, transaction: tx) }
+    }
+
     public func wipeIdentityKeysFromFailedProvisioning(tx: DBWriteTransaction) {
         ownIdentityKeyValueStore.removeValue(forKey: OWSIdentity.aci.persistenceKey, transaction: tx)
         ownIdentityKeyValueStore.removeValue(forKey: OWSIdentity.pni.persistenceKey, transaction: tx)

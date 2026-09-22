@@ -51,7 +51,7 @@ All five enrollment calls use the published `/v1/bconnected/enrollment` contract
 
 The shared request, 15 invalid mutations and 15 response/error cases are copied verbatim from the personal server fork into `SignalServiceKit/tests/Registration/Resources`. Focused host tests exercise the native cryptography, byte-preserving restarts, failure ordering, actual URLSession with synthetic URLProtocol responses, and the actual app view model with missing configuration. These are not device navigation/lifecycle or SQLCipher crash-durability tests. The actual full app graph separately compiles the production DB adapter and screen.
 
-Next prerequisites are explicit verified community/enrollment REST origins; installing the preserved keys and account identity atomically into native stores only after an authoritative active observation; owned service routing; and the existing complete pilot/Stories/8,000-member acceptance gates. Fresh installs remain setup-unavailable until both owned REST origins are configured; the source now contains the real invitation/approval flow described below. The release guard remains in force.
+Next prerequisites are explicit verified community/enrollment REST origins; releasing the installed native account only after the complete owned service graph is ready; owned service routing; and the existing complete pilot/Stories/8,000-member acceptance gates. Fresh installs remain setup-unavailable until both owned REST origins are configured; the source now contains the real invitation/approval flow described below. The release guard remains in force.
 
 ## Community invitation and approval integration
 
@@ -62,3 +62,18 @@ The actual owned registration screen now accepts name, graduation year and a sin
 Both non-idempotent writes have durable dispatch markers. A lost single-use application response requires administrator assistance and cannot consume another invitation automatically. A lost intent response permits only a deliberate later retry after the service's existing maximum five-minute intent window, subject to its authoritative eligibility checks. That retry reuses original material. A returned binding is saved before updating the enrollment collection, allowing a crash between those two writes to recover locally without another intent request. An expired or unavailable binding never silently replaces the saved keys.
 
 Only the initial-registration mode can open this flow. Re-registration and phone changes show an unavailable state before constructing any service; secondary-device linking is refused in owned mode. The legacy branch remains explicit. Active native lifecycle completion, live provider/device verification and the full release gates remain outstanding.
+
+
+## Native account installation (services still gated)
+
+After server activation, the real setup screen offers an explicit device-account save. The coordinator first fetches fresh authenticated status; a cached active observation alone cannot install anything. The SQLCipher adapter rechecks the exact immutable snapshot in one transaction and validates every native input and existing destination before mutation. It persists the original ACI/PNI identities, signed and last-resort KEM records, registration IDs, password, server identifiers, delivery/discoverability settings, and installation receipt atomically. Existing native account/key state is rejected rather than overwritten. Exact retries verify stored material and do not rotate keys or rewrite native metadata.
+
+The identity and prekey metadata archives are prepared before any writes; archive failures cannot silently turn into nil writes through the upstream KeyValueStore convenience API. The owned path makes no eager account-cache updates and uses no transaction completion callbacks (those callbacks may also run after an explicit rollback). A durable pending-services flag makes both cached and freshly loaded account readers remain unregistered and withhold credentials and local identifiers. There is deliberately no flag-release method in this slice. Registration notifications, recipient merge, account entropy/remaining setup, service readiness, and navigation completion remain separate future integration work.
+
+The host suite now includes fresh-status/suspension, installation-failure, immutable-account conflict and exact-key restart tests. For real storage/cache coverage, build the graph and run the standalone probe against a dedicated, already-booted arm64 iOS 27 simulator:
+
+```sh
+python3 Scripts/bconnected/probe_native_account_db.py --simulator <dedicated-simulator-UUID>
+```
+
+This compiles a separate executable against the actual built SignalServiceKit framework. It never launches Signal.app or initializes AppSetup. Four SQLCipher in-memory probes cover rollback of account/prekey/metadata/receipt writes, unchanged cached and recreated account readers, exact persisted bytes, conflicting identities, and key-counter safety. These tests do not exercise the entire native installer dependency graph, identity-manager lifecycle, encrypted-file crash recovery, production providers, or device acceptance. The framework must be rebuilt from the reviewed current source before running the probe. The normal app remains intentionally nonrunnable in compile-validation mode.

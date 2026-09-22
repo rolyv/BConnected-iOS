@@ -31,6 +31,72 @@ final class BConnectedEnrollmentTest: XCTestCase {
         return try BConnectedEnrollmentWire.response(data, status: status, operation: operation, expectedOperation: operationId, expectedPhone: phone)
     }
 
+    @MainActor
+    func testNativeInstallRequiresFreshActiveStatusAndExactRestartMaterial() async throws {
+        let store = MemoryStore(), sender = Sender()
+        store.supportsNativeInstallation = true
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        _ = try coordinator.prepare(input())
+        try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
+        sender.result = try observation("active")
+        _ = try await coordinator.perform(.begin)
+        let original = try XCTUnwrap(store.load())
+        XCTAssertFalse(try XCTUnwrap(coordinator.progress()).nativeAccountInstalled)
+        sender.result = try observation("suspended")
+        do { try await coordinator.installNativeAccount(); XCTFail() } catch {}
+        XCTAssertEqual(store.installCount, 0)
+        sender.result = try observation("active")
+        try await coordinator.installNativeAccount()
+        XCTAssertEqual(store.installCount, 1)
+        XCTAssertTrue(try XCTUnwrap(coordinator.progress()).nativeAccountInstalled)
+        let installed = try XCTUnwrap(store.load())
+        let restarted = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        _ = try restarted.prepare(input(agent: "new app version is not replacement metadata"))
+        try await restarted.installNativeAccount()
+        let final = try XCTUnwrap(store.load())
+        XCTAssertEqual(store.installCount, 1)
+        XCTAssertEqual(sender.calls, [.begin, .status, .status, .status])
+        XCTAssertEqual(final.password, original.password)
+        XCTAssertEqual(final.aci.pair, original.aci.pair)
+        XCTAssertEqual(final.pni.lastResortPreKey, original.pni.lastResortPreKey)
+        XCTAssertEqual(final.registrationRequest, original.registrationRequest)
+        XCTAssertEqual(final.originalUserAgent, original.originalUserAgent)
+        XCTAssertEqual(final.installedAccount, installed.installedAccount)
+        XCTAssertEqual(final.operationId, original.operationId)
+    }
+
+    @MainActor
+    func testNativeInstallUnavailablePersistenceFailureAndChangedAccountNeverMutate() async throws {
+        let store = MemoryStore(), sender = Sender()
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
+        do { try await coordinator.installNativeAccount(); XCTFail() } catch {}
+        XCTAssertTrue(sender.calls.isEmpty)
+        store.supportsNativeInstallation = true
+        _ = try coordinator.prepare(input())
+        try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
+        sender.result = try observation("active")
+        _ = try await coordinator.perform(.begin)
+        store.failInstall = true
+        do { try await coordinator.installNativeAccount(); XCTFail() } catch {}
+        XCTAssertEqual(store.installCount, 0)
+        XCTAssertNil(try store.load()?.installedAccount)
+        store.failInstall = false
+        try await coordinator.installNativeAccount()
+        let saved = try XCTUnwrap(store.load()?.installedAccount)
+        let (activeBytes, status) = try body("active")
+        var value = try BConnectedEnrollmentWire.object(activeBytes)
+        var account = value["account"] as! [String: Any]
+        account["aci"] = memberId; value["account"] = account
+        sender.result = try BConnectedEnrollmentWire.response(BConnectedEnrollmentWire.encode(value), status: status, operation: .status, expectedOperation: operationId, expectedPhone: phone)
+        do { try await coordinator.installNativeAccount(); XCTFail() } catch {}
+        XCTAssertEqual(store.installCount, 1)
+        XCTAssertEqual(try store.load()?.installedAccount, saved)
+        store.failCommit = true
+        let count = sender.calls.count
+        do { try await coordinator.installNativeAccount(); XCTFail() } catch {}
+        XCTAssertEqual(sender.calls.count, count)
+    }
+
     func testExactServerRequestFixtureAndEverySharedInvalidMutation() throws {
         let fixture = try resource("mobile-enrollment-v1")
         try BConnectedEnrollmentWire.request(fixture, operation: .begin)
@@ -185,7 +251,8 @@ final class BConnectedEnrollmentTest: XCTestCase {
         let callCount = sender.calls.count
         let model = BConnectedEnrollmentViewModel(info: ["BConnectedEnrollmentOrigin": "https://enrollment.example.invalid"]) { _ in coordinator }
         XCTAssertEqual(model.title, "Account confirmed")
-        XCTAssertTrue(model.detail.contains("Finishing device setup is not available"))
+        XCTAssertTrue(model.detail.contains("Save the verified account"))
+        XCTAssertFalse(try XCTUnwrap(coordinator.progress()).nativeAccountInstalled)
         XCTAssertFalse(model.busy)
         XCTAssertEqual(sender.calls.count, callCount)
         #endif
@@ -414,6 +481,20 @@ final class BConnectedEnrollmentTest: XCTestCase {
 private final class MemoryStore: BConnectedEnrollmentPersistence {
     var bytes: Data?
     var failCommit = false
+    var supportsNativeInstallation = false
+    var failInstall = false
+    var installCount = 0
+    func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws {
+        if failInstall { throw BConnectedEnrollmentError.persistenceUnavailable }
+        let fresh = try transaction { record in
+            guard var value = record, value.attempt == expected.attempt, value.observation?.account == account,
+                  value.installedAccount == nil || value.installedAccount == account else { throw BConnectedEnrollmentError.immutableConflict }
+            let fresh = value.installedAccount == nil
+            value.installedAccount = account; record = value
+            return fresh
+        }
+        if fresh { installCount += 1 }
+    }
     func load() throws -> BConnectedEnrollmentRecord? { try bytes.map { try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: $0) } }
     func transaction<T>(_ update: (inout BConnectedEnrollmentRecord?) throws -> T) throws -> T {
         var record = try load(); try record?.validate()

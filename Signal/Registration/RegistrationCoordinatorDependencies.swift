@@ -52,6 +52,8 @@ public struct RegistrationCoordinatorDependencies {
     public let usernameApiClient: any RegistrationCoordinatorImpl.Shims.UsernameApiClient
     public let usernameLinkManager: UsernameLinkManager
 
+    public var bconnectedNativeInstaller: BConnectedNativeAccountInstaller? = nil
+
     public static func from(_ object: NSObject) -> RegistrationCoordinatorDependencies {
         return RegistrationCoordinatorDependencies(
             appExpiry: DependenciesBridge.shared.appExpiry,
@@ -102,6 +104,11 @@ public struct RegistrationCoordinatorDependencies {
             udManager: RegistrationCoordinatorImpl.Wrappers.UDManager(SSKEnvironment.shared.udManagerRef),
             usernameApiClient: RegistrationCoordinatorImpl.Wrappers.UsernameApiClient(DependenciesBridge.shared.usernameApiClient),
             usernameLinkManager: DependenciesBridge.shared.usernameLinkManager,
+            bconnectedNativeInstaller: BConnectedNativeAccountInstaller(
+                accountManager: DependenciesBridge.shared.tsAccountManager,
+                identityManager: DependenciesBridge.shared.identityManager,
+                protocolStores: DependenciesBridge.shared.signalProtocolStoreManager,
+            ),
         )
     }
 }

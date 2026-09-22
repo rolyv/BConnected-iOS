@@ -84,6 +84,19 @@ public class KyberPreKeyStoreImpl {
         }
     }
 
+    func prepareBConnectedInitialKey(_ record: LibSignalClient.KyberPreKeyRecord, tx: DBWriteTransaction) throws -> () -> Void {
+        let keyId: Data, rotationDate: Data
+        do {
+            keyId = try NSKeyedArchiver.archivedData(withRootObject: NSNumber(value: record.id), requiringSecureCoding: true)
+            rotationDate = try NSKeyedArchiver.archivedData(withRootObject: Date() as NSDate, requiringSecureCoding: true)
+        } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
+        return { [self] in
+            storePreKeyRecords([record], isLastResort: true, tx: tx)
+            metadataStore.setData(keyId, key: Constants.lastKeyId, transaction: tx)
+            metadataStore.setData(rotationDate, key: Constants.lastKeyRotationDate, transaction: tx)
+        }
+    }
+
     func storeLastResortPreKeyFromChangeNumber(_ lastResortPreKey: LibSignalClient.KyberPreKeyRecord, tx: DBWriteTransaction) {
         storePreKeyRecords([lastResortPreKey], isLastResort: true, tx: tx)
         metadataStore.setInt32(Int32(lastResortPreKey.id), key: Constants.lastKeyId, transaction: tx)

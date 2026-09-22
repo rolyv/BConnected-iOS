@@ -62,6 +62,9 @@ struct BConnectedEnrollmentView: View {
                     if model.memberAllowsVerification && progress.lastObservation?.state == .verification && progress.lastObservation?.phoneVerified == true {
                         Button("Request account confirmation") { model.perform(.complete) }
                     }
+                    if model.memberAllowsVerification && progress.lastObservation?.state == .active && !progress.nativeAccountInstalled {
+                        Button("Save account on this iPhone") { model.installNativeAccount() }
+                    }
                     if progress.hasOperation { Button("Check status") { model.perform(.status) } }
                 }
                 if model.busy { ProgressView() }

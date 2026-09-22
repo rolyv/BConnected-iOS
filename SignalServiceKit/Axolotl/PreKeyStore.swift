@@ -108,6 +108,12 @@ class PreKeyStoreForIdentity {
         }
     }
 
+    func bconnectedHasAnyKeys(tx: DBReadTransaction) -> Bool {
+        failIfThrows {
+            try PreKeyRecord.filter(Column(PreKeyRecord.CodingKeys.identity.rawValue) == identity.rawValue).fetchCount(tx.database) != 0
+        }
+    }
+
     private func fetchSerializedRecord(in namespace: PreKeyRecord.Namespace, for keyId: UInt32, tx: DBReadTransaction) throws -> Data {
         let preKey = fetchPreKey(in: namespace, for: keyId, tx: tx)
         guard let serializedRecord = preKey?.serializedRecord else {

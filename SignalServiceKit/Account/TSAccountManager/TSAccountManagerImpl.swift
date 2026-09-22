@@ -157,6 +157,53 @@ extension TSAccountManagerImpl: PhoneNumberDiscoverabilitySetter {
     }
 }
 
+extension TSAccountManagerImpl {
+    /// Reads raw durable state, bypassing the cache which intentionally hides staged accounts.
+    func validateBConnectedInstallation(_ material: BConnectedNativeAccountMaterial, repeated: Bool, tx: DBReadTransaction) throws {
+        let pending = kvStore.fetchValue(Bool.self, forKey: Keys.bconnectedPendingServices, tx: tx) ?? false
+        if repeated {
+            guard pending,
+                  kvStore.fetchValue(String.self, forKey: Keys.localAci, tx: tx) == material.aci.serviceIdUppercaseString,
+                  kvStore.fetchValue(String.self, forKey: Keys.localPni, tx: tx) == material.pni.rawUUID.uuidString,
+                  kvStore.fetchValue(String.self, forKey: Keys.localPhoneNumber, tx: tx) == material.account.number,
+                  kvStore.fetchValue(String.self, forKey: Keys.serverAuthToken, tx: tx) == material.password,
+                  kvStore.fetchValue(Int64.self, forKey: Keys.deviceId, tx: tx) == 1,
+                  getRegistrationId(for: .aci, tx: tx) == material.registrationId,
+                  getRegistrationId(for: .pni, tx: tx) == material.pniRegistrationId,
+                  kvStore.fetchValue(Bool.self, forKey: Keys.isManualMessageFetchEnabled, tx: tx) == material.manualFetch,
+                  kvStore.fetchValue(Bool.self, forKey: Keys.isDiscoverableByPhoneNumber, tx: tx) == material.discoverable else {
+                throw BConnectedEnrollmentError.immutableConflict
+            }
+        } else {
+            // Never overwrite a registered, deregistered, partial legacy, or recovery account.
+            guard !pending, case .unregistered = AccountState(kvStore: kvStore, tx: tx).registrationState,
+                  [Keys.localAci, Keys.localPni, Keys.localPhoneNumber, Keys.serverAuthToken,
+                   Keys.reregistrationPhoneNumber, Keys.reregistrationAci].allSatisfy({ kvStore.fetchValue(String.self, forKey: $0, tx: tx) == nil }),
+                  kvStore.fetchValue(Int64.self, forKey: Keys.deviceId, tx: tx) == nil,
+                  kvStore.fetchValue(Date.self, forKey: Keys.registrationDate, tx: tx) == nil,
+                  getRegistrationId(for: .aci, tx: tx) == nil, getRegistrationId(for: .pni, tx: tx) == nil else {
+                throw BConnectedEnrollmentError.immutableConflict
+            }
+        }
+    }
+
+    /// No eager cache mutation and no transaction completion callbacks: GRDB runs completion blocks
+    /// after explicit rollbacks too. The pending flag hides credentials on every fresh cache load.
+    func stageBConnectedInstallation(_ material: BConnectedNativeAccountMaterial, tx: DBWriteTransaction) {
+        kvStore.writeValue(true, forKey: Keys.bconnectedPendingServices, tx: tx)
+        kvStore.writeValue(material.aci.serviceIdUppercaseString, forKey: Keys.localAci, tx: tx)
+        kvStore.writeValue(material.pni.rawUUID.uuidString, forKey: Keys.localPni, tx: tx)
+        kvStore.writeValue(material.account.number, forKey: Keys.localPhoneNumber, tx: tx)
+        kvStore.writeValue(material.password, forKey: Keys.serverAuthToken, tx: tx)
+        kvStore.writeValue(Int64(1), forKey: Keys.deviceId, tx: tx)
+        setRegistrationId(material.registrationId, for: .aci, tx: tx)
+        setRegistrationId(material.pniRegistrationId, for: .pni, tx: tx)
+        kvStore.writeValue(material.manualFetch, forKey: Keys.isManualMessageFetchEnabled, tx: tx)
+        kvStore.writeValue(material.discoverable, forKey: Keys.isDiscoverableByPhoneNumber, tx: tx)
+        // Registration date/notifications are reserved for a later services-ready transition.
+    }
+}
+
 extension TSAccountManagerImpl: LocalIdentifiersSetter {
 
     public func initializeLocalIdentifiers(
@@ -443,6 +490,18 @@ extension TSAccountManagerImpl {
             // WARNING: AccountState is loaded before data migrations have run (as well as after).
             // Do not use data migrations to update AccountState data; do it through schema migrations
             // or through normal write transactions. TSAccountManager should be the only code accessing this state anyway.
+            if kvStore.fetchValue(Bool.self, forKey: Keys.bconnectedPendingServices, tx: tx) == true {
+                self.localIdentifiers = nil
+                self.deviceId = .valid(.primary)
+                self.serverAuthToken = nil
+                self.registrationState = .unregistered
+                self.registrationDate = nil
+                self.isTransferInProgress = false
+                self.phoneNumberDiscoverability = nil
+                self.lastSetIsDiscoverableByPhoneNumberAt = .distantPast
+                self.isManualMessageFetchEnabled = false
+                return
+            }
             let (aci, phoneNumber, pni) = Self.loadLocalIdentifiers(
                 kvStore: kvStore,
                 tx: tx,
@@ -598,6 +657,7 @@ extension TSAccountManagerImpl {
         }
 
         fileprivate enum Keys {
+            static let bconnectedPendingServices = "BConnected_PendingServices_v1"
             static let deviceId = "TSAccountManager_DeviceId"
             static let serverAuthToken = "TSStorageServerAuthToken"
 
