@@ -190,15 +190,18 @@ public class RegistrationNavigationController: OWSNavigationController {
 
     private func controller(for step: RegistrationStep) -> AnyController? {
         switch step {
-        case .bconnectedEnrollment:
+        case .bconnectedEnrollment(let initialRegistration):
             return Controller(type: BConnectedEnrollmentViewController.self, make: { presenter in
-                BConnectedEnrollmentViewController { endpoint in
-                    // Only the concrete owned coordinator supplies this step.
-                    guard let owned = presenter.coordinator as? RegistrationCoordinatorImpl else {
-                        owsFail("Owned enrollment coordinator unavailable")
-                    }
-                    return owned.makeBConnectedEnrollmentCoordinator(endpoint: endpoint)
+                // Only the concrete owned coordinator supplies this step.
+                guard let owned = presenter.coordinator as? RegistrationCoordinatorImpl else {
+                    owsFail("Owned enrollment coordinator unavailable")
                 }
+                return BConnectedEnrollmentViewController(
+                    initialRegistration: initialRegistration,
+                    makeCoordinator: owned.makeBConnectedEnrollmentCoordinator,
+                    makeCommunity: owned.makeBConnectedCommunityCoordinator,
+                    makePreparation: owned.prepareBConnectedEnrollment
+                )
             }, update: nil)
 
         case .registrationSplash:

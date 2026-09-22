@@ -255,6 +255,145 @@ final class BConnectedEnrollmentTest: XCTestCase {
         }
     }
 
+    @MainActor
+    func testCommunityApprovalPrecedesPreparationAndIntentFollowsDurableKeys() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        try await community.apply(name: "Fixture Alumnus", year: 2000, invitation: challenge)
+        XCTAssertEqual(try community.progress().member?.status, .pending)
+        var preparations = 0
+        do { try await community.connectApprovedMembership { preparations += 1; return self.input() }; XCTFail() } catch {}
+        XCTAssertEqual(preparations, 0); XCTAssertNil(keys.bytes)
+        service.status = .approved; try await community.refreshApproval()
+        service.beforeIntent = { material in
+            let record = try XCTUnwrap(keys.load())
+            XCTAssertEqual(material.registrationAttemptId, record.attempt)
+            XCTAssertEqual(material.keyCommitment, record.keyCommitment)
+            XCTAssertNil(record.binding)
+        }
+        try await community.connectApprovedMembership { preparations += 1; return self.input() }
+        XCTAssertEqual(preparations, 1)
+        XCTAssertTrue(try enrollment.progress()!.hasApprovedIntentBinding)
+        XCTAssertFalse(try enrollment.progress()!.hasOperation)
+        XCTAssertNil(try enrollment.progress()!.lastObservation)
+        XCTAssertTrue(signal.calls.isEmpty)
+        #if SWIFT_PACKAGE
+        let model = BConnectedEnrollmentViewModel(info: ["BConnectedEnrollmentOrigin": "https://enrollment.example.invalid", "BConnectedCommunityOrigin": "https://community.example.invalid"],
+            makeCoordinator: { _ in enrollment }, makeCommunity: { _, _ in community }, makePreparation: { _ in self.input() })
+        XCTAssertEqual(model.title, "Verify your phone")
+        XCTAssertFalse(model.canApply)
+        XCTAssertFalse(model.maySend)
+        #endif
+    }
+
+    @MainActor
+    func testLostCommunityApplicationResponseNeverConsumesAnotherInvitationAutomatically() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        membership.failCommit = true
+        do { try await community.apply(name: "Fixture", year: 2000, invitation: challenge); XCTFail() } catch {}
+        XCTAssertEqual(service.applications, 0)
+        membership.failCommit = false; service.error = BConnectedEnrollmentError.unavailable
+        do { try await community.apply(name: "Fixture", year: 2000, invitation: challenge); XCTFail() } catch {}
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        XCTAssertTrue(try community.progress().applicationOutcomeUncertain)
+        service.error = nil
+        do { try await community.apply(name: "Fixture", year: 2000, invitation: challenge); XCTFail() } catch {}
+        XCTAssertEqual(service.applications, 1)
+        XCTAssertNil(keys.bytes)
+    }
+
+    @MainActor
+    func testLostIntentRequiresExplicitLaterRetryAndRetainsOriginalMaterial() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var date = Date(timeIntervalSince1970: 1_800_000_000)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment, now: { date })
+        try await community.apply(name: "Fixture", year: 2000, invitation: challenge)
+        service.status = .approved; try await community.refreshApproval()
+        service.error = BConnectedEnrollmentError.unavailable
+        do { try await community.connectApprovedMembership { self.input() }; XCTFail() } catch {}
+        let original = try keys.load()!
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment, now: { date })
+        service.error = nil; try await community.refreshApproval()
+        do { try await community.connectApprovedMembership(preparation: { XCTFail("Must reuse"); return self.input() }, explicitlyRetryLostIntent: true); XCTFail() } catch {}
+        XCTAssertEqual(service.intents, 1)
+        date = date.addingTimeInterval(301)
+        do { try await community.connectApprovedMembership { XCTFail("Must reuse"); return self.input() }; XCTFail() } catch {}
+        XCTAssertEqual(service.intents, 1)
+        try await community.connectApprovedMembership(preparation: { XCTFail("Must reuse"); return self.input() }, explicitlyRetryLostIntent: true)
+        XCTAssertEqual(service.intents, 2)
+        let final = try keys.load()!
+        XCTAssertEqual(final.password, original.password)
+        XCTAssertEqual(final.registrationRequest, original.registrationRequest)
+        XCTAssertEqual(final.attempt, original.attempt)
+        XCTAssertEqual(final.originalUserAgent, original.originalUserAgent)
+    }
+
+    @MainActor
+    func testPersistedIntentReceiptRecoversCrossStoreFailureWithoutNewRequest() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        try await community.apply(name: "Fixture", year: 2000, invitation: challenge)
+        service.status = .approved; try await community.refreshApproval()
+        service.beforeIntent = { _ in keys.failCommit = true }
+        do { try await community.connectApprovedMembership { self.input() }; XCTFail() } catch {}
+        XCTAssertNotNil(try membership.load().binding)
+        XCTAssertNil(try keys.load()!.binding)
+        keys.failCommit = false
+        let resumed = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        try await resumed.connectApprovedMembership { XCTFail("Must recover receipt"); return self.input() }
+        XCTAssertEqual(service.intents, 1)
+        XCTAssertTrue(try enrollment.progress()!.hasApprovedIntentBinding)
+    }
+
+    @MainActor
+    func testRevokedApprovalAndWrongMemberStopBindingWithoutErasingSavedKeys() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        try await community.apply(name: "Fixture", year: 2000, invitation: challenge)
+        service.status = .approved; try await community.refreshApproval()
+        service.wrongMember = true
+        do { try await community.connectApprovedMembership { self.input() }; XCTFail() } catch {}
+        XCTAssertNil(try keys.load()!.binding)
+        let saved = try keys.load()!.registrationRequest
+        service.status = .suspended; service.wrongMember = false; try await community.refreshApproval()
+        do { try await community.connectApprovedMembership { XCTFail(); return self.input() }; XCTFail() } catch {}
+        XCTAssertEqual(try keys.load()!.registrationRequest, saved)
+        XCTAssertEqual(service.intents, 1)
+    }
+
+    func testCommunityClientExactRoutesBearerAndStrictNonAuthorizingResponse() async throws {
+        let http = CommunityHTTP()
+        let client = BConnectedCommunityClient(endpoint: try .init(origin: URL(string: "https://community.example.invalid")!), http: http)
+        let member: [String: Any] = ["id": memberId, "fullName": "Fixture", "graduationYear": 2000, "status": "pending"]
+        http.response = (try BConnectedEnrollmentWire.encode(["token": challenge, "expiresAt": 1_900_000_000_000, "member": member]), 201)
+        let session = try await client.enroll(name: "Fixture", year: 2000, invite: challenge)
+        XCTAssertNil(http.requests.last!.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/enroll")
+        http.response = (try BConnectedEnrollmentWire.encode(member), 200)
+        _ = try await client.member(token: session.token)
+        XCTAssertEqual(http.requests.last!.httpMethod, "GET")
+        XCTAssertEqual(http.requests.last!.value(forHTTPHeaderField: "Authorization"), "Bearer " + challenge)
+        let material = BConnectedEnrollmentIntentMaterial(registrationAttemptId: challenge, keyCommitment: String(repeating: "a", count: 64))
+        var intent: [String: Any] = ["memberId": memberId, "bindingChallenge": challenge, "expiresAt": 1_900_000_000_000,
+                                  "status": "awaiting_signal_claim", "registrationAuthorized": false]
+        http.response = (try BConnectedEnrollmentWire.encode(intent), 201)
+        _ = try await client.intent(token: session.token, material: material)
+        let body = try BConnectedEnrollmentWire.object(http.requests.last!.httpBody!)
+        XCTAssertEqual(Set(body.keys), ["registrationAttemptId", "deviceKeyCommitment"])
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/admission/intents")
+        intent["registrationAuthorized"] = true; http.response = (try BConnectedEnrollmentWire.encode(intent), 201)
+        do { _ = try await client.intent(token: session.token, material: material); XCTFail() } catch {}
+        http.response = (Data("{\"error\":\"private IAM detail\"}".utf8), 401)
+        do { _ = try await client.member(token: session.token); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .unavailable) }
+    }
+
     func testRequestIsExplicitOwnedHTTPSAndNeverSerializesPrivateMaterial() throws {
         var record = try BConnectedEnrollmentRecord.generate(input())
         record.binding = .init(memberId: memberId, challenge: challenge)
@@ -281,7 +420,7 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
         let result = try update(&record)
         if failCommit { throw BConnectedEnrollmentError.persistenceUnavailable }
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        bytes = try encoder.encode(record)
+        bytes = try record.map { try encoder.encode($0) }
         return result
     }
 }
@@ -325,4 +464,47 @@ private final class EnrollmentURLProtocol: URLProtocol, @unchecked Sendable {
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private final class CommunityStore: BConnectedCommunityPersistence {
+    var bytes: Data?
+    var failCommit = false
+    func load() throws -> BConnectedCommunityRecord {
+        if let bytes { return try JSONDecoder().decode(BConnectedCommunityRecord.self, from: bytes) }
+        return .init()
+    }
+    func transaction<T>(_ update: (inout BConnectedCommunityRecord) throws -> T) throws -> T {
+        var record = try load(); try record.validate()
+        let result = try update(&record)
+        guard !failCommit else { throw BConnectedEnrollmentError.persistenceUnavailable }
+        try record.validate(); bytes = try JSONEncoder().encode(record)
+        return result
+    }
+}
+private final class CommunitySender: BConnectedCommunitySending {
+    var status: BConnectedCommunityMember.Status = .pending
+    var error: Error?
+    var applications = 0
+    var intents = 0
+    var wrongMember = false
+    var beforeIntent: ((BConnectedEnrollmentIntentMaterial) throws -> Void)?
+    let id = "00000000-0000-4000-8000-000000000001"
+    let challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+    func enroll(name: String, year: Int, invite: String) async throws -> BConnectedCommunityRecord.Session {
+        applications += 1; if let error { throw error }
+        return .init(token: challenge, expiresAt: 1_900_000_000_000, member: .init(id: id, fullName: name, graduationYear: year, status: .pending))
+    }
+    func member(token: String) async throws -> BConnectedCommunityMember {
+        if let error { throw error }
+        return .init(id: id, fullName: "Fixture", graduationYear: 2000, status: status)
+    }
+    func intent(token: String, material: BConnectedEnrollmentIntentMaterial) async throws -> BConnectedCommunityRecord.Binding {
+        intents += 1; try beforeIntent?(material); if let error { throw error }
+        return .init(memberId: wrongMember ? "00000000-0000-4000-8000-000000000002" : id, bindingChallenge: challenge, expiresAt: 1_900_000_000_000)
+    }
+}
+private final class CommunityHTTP: BConnectedOwnedHTTPSending {
+    var response = (Data(), 200)
+    var requests: [URLRequest] = []
+    func send(_ request: URLRequest) async throws -> (Data, Int) { requests.append(request); return response }
 }

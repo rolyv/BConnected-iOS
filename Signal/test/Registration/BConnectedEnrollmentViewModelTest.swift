@@ -8,6 +8,21 @@ import SignalServiceKit
 
 final class BConnectedEnrollmentViewModelTest: XCTestCase {
     @MainActor
+    func testDeferredAccountFlowsDoNotConstructServicesEvenWithValidOrigins() {
+        let model = BConnectedEnrollmentViewModel(info: ["BConnectedEnrollmentOrigin": "https://enrollment.example.invalid", "BConnectedCommunityOrigin": "https://community.example.invalid"], initialRegistration: false,
+            makeCoordinator: { _ in fatalError("Deferred flow must not construct enrollment") },
+            makeCommunity: { _, _ in fatalError("Deferred flow must not construct membership") })
+        model.perform(.begin)
+        model.apply()
+        model.connectMembership()
+        XCTAssertNil(model.progress)
+        XCTAssertNil(model.communityProgress)
+        XCTAssertFalse(model.canApply)
+        XCTAssertFalse(model.busy)
+        XCTAssertEqual(model.title, "Account setup unavailable")
+    }
+
+    @MainActor
     func testMissingOrInvalidEndpointDoesNotConstructServiceOrDispatch() {
         for info: [String: Any] in [[:], ["BConnectedEnrollmentOrigin": "http://example.invalid"], ["BConnectedEnrollmentOrigin": "https://example.invalid/legacy"]] {
             var constructions = 0

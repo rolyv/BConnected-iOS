@@ -43,9 +43,36 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
         BConnectedEnrollmentCoordinator(db: deps.db, endpoint: endpoint)
     }
 
+    @MainActor
+    public func makeBConnectedCommunityCoordinator(endpoint: BConnectedEnrollmentEndpoint, enrollment: BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator {
+        BConnectedCommunityEnrollmentCoordinator(db: deps.db, endpoint: endpoint, enrollment: enrollment)
+    }
+
+    @MainActor
+    public func prepareBConnectedEnrollment(phone: String) async throws -> BConnectedEnrollmentPreparation {
+        guard case .registering = mode else { throw BConnectedEnrollmentError.unavailable }
+        guard E164(phone) != nil else { throw BConnectedEnrollmentError.invalidInput }
+        let apns: String?
+        switch await fetchApnRegistrationId() {
+        case .success(let token): apns = token.apnsToken
+        case .pushUnsupported: apns = nil
+        case .timeout, .genericError: throw BConnectedEnrollmentError.unavailable
+        }
+        let accessKey: Data = try db.writeWithRollbackIfThrows { tx in
+            let profile = OWSUserProfile.getOrBuildUserProfileForLocalUser(userProfileWriter: .registration, tx: tx)
+            guard let key = profile.profileKey else { throw BConnectedEnrollmentError.persistenceUnavailable }
+            return SMKUDAccessKey(profileKey: key).keyData
+        }
+        return .init(phone: phone, unidentifiedAccessKey: accessKey, apnsToken: apns, discoverableByPhoneNumber: false,
+                     signalAgent: "BConnected-iOS", userAgent: OWSURLSession.userAgentHeaderValueSignalIos)
+    }
+
     // MARK: - Public API
 
     public func switchToSecondaryDeviceLinking() -> Bool {
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        return false
+        #else
         logger.info("")
 
         switch mode {
@@ -57,6 +84,7 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
         case .reRegistering, .changingNumber:
             return false
         }
+        #endif
     }
 
     public func exitRegistration() -> Bool {
@@ -108,7 +136,10 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
         #if !BCONNECTED_LEGACY_TRANSPORT
         // The upstream restore path can contact legacy session/SVR services. Owned enrollment
         // must resolve its own durable state before any such effects, including on restart.
-        return .bconnectedEnrollment
+        switch mode {
+        case .registering: return .bconnectedEnrollment(initialRegistration: true)
+        case .reRegistering, .changingNumber: return .bconnectedEnrollment(initialRegistration: false)
+        }
         #else
         // Always start by restoring state.
         await restoreStateIfNeeded()

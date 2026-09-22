@@ -20,29 +20,12 @@ public struct BConnectedEnrollmentEndpoint {
 }
 
 final class BConnectedEnrollmentClient: BConnectedEnrollmentSending {
-    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            completionHandler(nil)
-        }
-    }
     private let endpoint: BConnectedEnrollmentEndpoint
-    private let session: URLSession
-
+    private let http: any BConnectedOwnedHTTPSending
     init(endpoint: BConnectedEnrollmentEndpoint, protocolClasses: [AnyClass]? = nil) {
         self.endpoint = endpoint
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = protocolClasses
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
-        session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
+        self.http = BConnectedOwnedHTTP(protocolClasses: protocolClasses)
     }
-    deinit { session.invalidateAndCancel() }
 
     func request(_ operation: BConnectedEnrollmentOperation, record: BConnectedEnrollmentRecord, code: String?) throws -> URLRequest {
         try record.validate()
@@ -68,22 +51,8 @@ final class BConnectedEnrollmentClient: BConnectedEnrollmentSending {
 
     func send(_ operation: BConnectedEnrollmentOperation, record: BConnectedEnrollmentRecord, code: String?) async throws -> BConnectedEnrollmentObservation {
         let request = try request(operation, record: record, code: code)
-        do {
-            // No retry loop. A request may have reached the provider even if no response arrives.
-            let (bytes, response) = try await session.bytes(for: request)
-            defer { bytes.task.cancel() }
-            guard let response = response as? HTTPURLResponse, response.url == request.url,
-                  response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json",
-                  response.value(forHTTPHeaderField: "Cache-Control")?.lowercased().split(separator: ",").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "no-store" }) == true,
-                  response.expectedContentLength <= BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }
-            var data = Data()
-            for try await byte in bytes {
-                guard data.count < BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }
-                data.append(byte)
-            }
-            return try BConnectedEnrollmentWire.response(data, status: response.statusCode, operation: operation,
-                                                         expectedOperation: record.operationId, expectedPhone: record.phone)
-        } catch let error as BConnectedEnrollmentError { throw error }
-        catch { throw BConnectedEnrollmentError.unavailable }
+        let (data, status) = try await http.send(request)
+        return try BConnectedEnrollmentWire.response(data, status: status, operation: operation,
+                                                     expectedOperation: record.operationId, expectedPhone: record.phone)
     }
 }

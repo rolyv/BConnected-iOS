@@ -9,7 +9,7 @@ public enum RegistrationStep: Equatable {
 
     // MARK: - Opening Steps
 
-    case bconnectedEnrollment
+    case bconnectedEnrollment(initialRegistration: Bool)
     case registrationSplash
     case changeNumberSplash
     case permissions

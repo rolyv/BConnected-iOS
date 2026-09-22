@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0E04000000000000000005 /* BConnectedCommunityEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */; };
+		BC0E04000000000000000003 /* BConnectedCommunityEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */; };
+		BC0E04000000000000000001 /* BConnectedOwnedHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */; };
 		BC0E03000000000000000005 /* BConnectedEnrollmentViewModelTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E03000000000000000006 /* BConnectedEnrollmentViewModelTest.swift */; };
 		BC0E03000000000000000003 /* BConnectedEnrollmentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E03000000000000000004 /* BConnectedEnrollmentViewModel.swift */; };
 		BC0E03000000000000000001 /* BConnectedEnrollmentViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E03000000000000000002 /* BConnectedEnrollmentViewController.swift */; };
@@ -4288,6 +4291,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollmentStore.swift; sourceTree = "<group>"; };
+		BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollment.swift; sourceTree = "<group>"; };
+		BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedOwnedHTTP.swift; sourceTree = "<group>"; };
 		BC0E03000000000000000006 /* BConnectedEnrollmentViewModelTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentViewModelTest.swift; sourceTree = "<group>"; };
 		BC0E03000000000000000004 /* BConnectedEnrollmentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentViewModel.swift; sourceTree = "<group>"; };
 		BC0E03000000000000000002 /* BConnectedEnrollmentViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentViewController.swift; sourceTree = "<group>"; };
@@ -10354,6 +10360,9 @@
 				BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */,
 				BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */,
 				BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */,
+				BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */,
+				BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */,
+				BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */,
 				BC0C01000000000000000002 /* BConnectedRegistrationKeyCommitment.swift */,
 				6600F357298D646E00B1EDB7 /* RegistrationSessionManagerImpl.swift */,
 			);
@@ -20348,6 +20357,9 @@
 				BC0E01000000000000000003 /* BConnectedEnrollmentState.swift in Sources */,
 				BC0E01000000000000000005 /* BConnectedEnrollmentClient.swift in Sources */,
 				BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */,
+				BC0E04000000000000000001 /* BConnectedOwnedHTTP.swift in Sources */,
+				BC0E04000000000000000003 /* BConnectedCommunityEnrollment.swift in Sources */,
+				BC0E04000000000000000005 /* BConnectedCommunityEnrollmentStore.swift in Sources */,
 				BC0C01000000000000000001 /* BConnectedRegistrationKeyCommitment.swift in Sources */,
 				6600F358298D646E00B1EDB7 /* RegistrationSessionManagerImpl.swift in Sources */,
 				6691E7F22996E9BC0032A68A /* RegistrationSessionManagerMock.swift in Sources */,
