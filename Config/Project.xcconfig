@@ -8,5 +8,10 @@ GCC_TREAT_WARNINGS_AS_ERRORS = YES
 MTL_TREAT_WARNINGS_AS_ERRORS = YES
 OTHER_SWIFT_FLAGS = $(inherited) -warnings-as-errors
 
+// The app and both extensions share these bundle versions. Artifact builds may
+// override them explicitly on the xcodebuild command line.
+CURRENT_PROJECT_VERSION = 1
+MARKETING_VERSION = 8.30
+
 // User-specific overrides
 #include? "User.xcconfig"

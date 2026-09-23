@@ -28,15 +28,15 @@ public struct BConnectedPhoneSignupProgress {
     public let hasOperation: Bool
     public let phoneVerified: Bool
     public let smsOutcomeNeedsExplicitDecision: Bool
-    public let nextSmsSeconds: Int
-    public let nextCheckSeconds: Int
+    public let nextSmsSeconds: Int?
+    public let nextCheckSeconds: Int?
 }
 
 public struct BConnectedPhoneSignupObservation: Codable, Equatable {
     public let operationId: String
     public let phoneVerified: Bool
-    public let nextSmsSeconds: Int
-    public let nextCheckSeconds: Int
+    public let nextSmsSeconds: Int?
+    public let nextCheckSeconds: Int?
     public let expiresInSeconds: Int
 }
 
@@ -290,10 +290,16 @@ final class BConnectedPhoneSignupClient: BConnectedPhoneSignupSending {
                   try !BConnectedEnrollmentWire.boolean(root["registrationAuthorized"]) else {
                 throw BConnectedEnrollmentError.invalidResponse
             }
-            let nextSms = try BConnectedEnrollmentWire.integer(root["nextSmsSeconds"])
-            let nextCheck = try BConnectedEnrollmentWire.integer(root["nextCheckSeconds"])
+            func cooldown(_ value: Any?) throws -> Int? {
+                if value is NSNull { return nil }
+                let seconds = try BConnectedEnrollmentWire.integer(value)
+                guard seconds >= 0 else { throw BConnectedEnrollmentError.invalidResponse }
+                return seconds
+            }
+            let nextSms = try cooldown(root["nextSmsSeconds"])
+            let nextCheck = try cooldown(root["nextCheckSeconds"])
             let expires = try BConnectedEnrollmentWire.integer(root["expiresInSeconds"])
-            guard nextSms >= 0, nextCheck >= 0, expires > 0 else { throw BConnectedEnrollmentError.invalidResponse }
+            guard expires > 0 else { throw BConnectedEnrollmentError.invalidResponse }
             return .init(operationId: challenge.applicationId,
                          phoneVerified: try BConnectedEnrollmentWire.boolean(root["phoneVerified"]),
                          nextSmsSeconds: nextSms, nextCheckSeconds: nextCheck, expiresInSeconds: expires)
@@ -321,7 +327,8 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         try record.validate()
         let mayRestart: Bool
         if let challenge = record.phoneChallenge, record.phoneApplication != nil,
-           record.session == nil, record.phoneSignup?.observation?.phoneVerified != true,
+           record.session == nil, record.phoneSignup?.operationId == nil,
+           record.phoneSignup?.observation?.phoneVerified != true,
            challenge.expiresAt <= Int(now().timeIntervalSince1970 * 1000),
            record.binding == nil, record.intentRetryNotBefore == nil {
             mayRestart = try enrollment.progress() == nil
@@ -332,8 +339,8 @@ public final class BConnectedCommunityEnrollmentCoordinator {
             phoneSignup = .init(hasChallenge: true, hasOperation: record.phoneSignup?.operationId != nil,
                                 phoneVerified: observation?.phoneVerified == true,
                                 smsOutcomeNeedsExplicitDecision: record.phoneSignup?.sendNeedsExplicitDecision == true,
-                                nextSmsSeconds: observation?.nextSmsSeconds ?? 0,
-                                nextCheckSeconds: observation?.nextCheckSeconds ?? 0)
+                                nextSmsSeconds: record.phoneSignup?.operationId == nil ? 0 : observation?.nextSmsSeconds,
+                                nextCheckSeconds: observation?.nextCheckSeconds)
         } else { phoneSignup = nil }
         return .init(member: record.session?.member,
                      applicationOutcomeUncertain: record.applicationDispatched && record.session == nil && record.phoneChallenge == nil,
@@ -423,7 +430,8 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         guard try enrollment.progress() == nil else { throw BConnectedEnrollmentError.immutableConflict }
         try persistence.transaction { record in
             guard let challenge = record.phoneChallenge, record.phoneApplication != nil,
-                  record.session == nil, record.phoneSignup?.observation?.phoneVerified != true,
+                  record.session == nil, record.phoneSignup?.operationId == nil,
+                  record.phoneSignup?.observation?.phoneVerified != true,
                   challenge.expiresAt <= Int(now().timeIntervalSince1970 * 1000),
                   record.binding == nil, record.intentRetryNotBefore == nil else {
                 throw BConnectedEnrollmentError.immutableConflict
