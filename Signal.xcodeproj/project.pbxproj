@@ -21,6 +21,7 @@
 		BC0E05000000000000000001 /* BConnectedNativeAccountInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */; };
 		BC0E06000000000000000001 /* BConnectedLocalAccountSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */; };
 		BC0E07000000000000000001 /* BConnectedPreKeySetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E07000000000000000002 /* BConnectedPreKeySetup.swift */; };
+		BC0E08000000000000000001 /* BConnectedGroupManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E08000000000000000002 /* BConnectedGroupManifest.swift */; };
 		BC0E01000000000000000005 /* BConnectedEnrollmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */; };
 		BC0E01000000000000000003 /* BConnectedEnrollmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */; };
 		BC0E01000000000000000001 /* BConnectedEnrollmentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000002 /* BConnectedEnrollmentWire.swift */; };
@@ -4308,6 +4309,7 @@
 		BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedNativeAccountInstaller.swift; sourceTree = "<group>"; };
 		BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedLocalAccountSetup.swift; sourceTree = "<group>"; };
 		BC0E07000000000000000002 /* BConnectedPreKeySetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedPreKeySetup.swift; sourceTree = "<group>"; };
+		BC0E08000000000000000002 /* BConnectedGroupManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedGroupManifest.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentClient.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentState.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000002 /* BConnectedEnrollmentWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentWire.swift; sourceTree = "<group>"; };
@@ -16098,6 +16100,7 @@
 				34BB3C5923C6644B001651FC /* GroupsV2OutgoingChangesImpl.swift */,
 				345DE95F23ED9AA500A8E6E3 /* GroupsV2ProfileKeyUpdater.swift */,
 				3456A73123D63EBE00947219 /* GroupsV2Protos.swift */,
+				BC0E08000000000000000002 /* BConnectedGroupManifest.swift */,
 				34BB3C5823C6644B001651FC /* GroupsV2Utils.swift */,
 				D99A0F6129F35CE1002E02E3 /* GroupUpdateInfoMessageInserter+FoldIntoExistingMessage.swift */,
 				D99A0F5F29F34FDA002E02E3 /* GroupUpdateInfoMessageInserter.swift */,
@@ -20369,6 +20372,7 @@
 				BC0E05000000000000000001 /* BConnectedNativeAccountInstaller.swift in Sources */,
 				BC0E06000000000000000001 /* BConnectedLocalAccountSetup.swift in Sources */,
 				BC0E07000000000000000001 /* BConnectedPreKeySetup.swift in Sources */,
+				BC0E08000000000000000001 /* BConnectedGroupManifest.swift in Sources */,
 				BC0E04000000000000000001 /* BConnectedOwnedHTTP.swift in Sources */,
 				BC0E04000000000000000003 /* BConnectedCommunityEnrollment.swift in Sources */,
 				BC0E04000000000000000005 /* BConnectedCommunityEnrollmentStore.swift in Sources */,

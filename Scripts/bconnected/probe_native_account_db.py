@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--simulator", required=True, help="UUID of an already booted dedicated simulator")
-    parser.add_argument("--probe", choices=["native-account", "http-services", "local-account", "account-attributes", "file-recovery", "cryptographic-inputs", "group-avatar-form"], default="native-account")
+    parser.add_argument("--probe", choices=["native-account", "http-services", "local-account", "account-attributes", "file-recovery", "cryptographic-inputs", "group-avatar-form", "group-manifest"], default="native-account")
     parser.add_argument("--group-public-params-file", type=Path, help="Public-only binary parameters file for cryptographic-inputs; never a server configuration or private key")
     parser.add_argument("--public-authorities-file", type=Path, help="Optional public-only JSON with senderTrustRoot and senderCertificate; never a private key")
     args = parser.parse_args()
@@ -36,6 +36,11 @@ def main():
         work = Path(temporary)
         bundle = work / "DBValidation.app"
         bundle.mkdir()
+        if args.probe == "group-manifest":
+            fixture = (ROOT / "SignalServiceKit/tests/Groups/bconnected-group-manifest-v1.json").read_bytes()
+            if len(fixture) > 131072:
+                parser.error("Manifest interoperability fixture exceeds bound")
+            (bundle / "manifest-fixture.json").write_bytes(fixture)
         bundle_info = {
             "CFBundleExecutable": "native-db", "CFBundleIdentifier": "com.bconnected.validation.db",
             "CFBundleName": "DBValidation", "CFBundlePackageType": "APPL", "OWSBundleIDPrefix": "com.bconnected.validation",
@@ -68,13 +73,13 @@ def main():
             if directory.is_dir() and directory.suffix != ".framework":
                 command += ["-F", str(directory)]
         # Explicit main.swift makes this a standalone top-level test executable.
-        source = {"native-account": "NativeAccountDatabaseProbe.swift", "http-services": "HTTPServiceFactoryProbe.swift", "local-account": "LocalAccountSetupProbe.swift", "account-attributes": "AccountAttributesProbe.swift", "file-recovery": "EnrollmentFileRecoveryProbe.swift", "cryptographic-inputs": "OwnedCryptographicInputsProbe.swift", "group-avatar-form": "GroupAvatarFormProbe.swift"}[args.probe]
+        source = {"native-account": "NativeAccountDatabaseProbe.swift", "http-services": "HTTPServiceFactoryProbe.swift", "local-account": "LocalAccountSetupProbe.swift", "account-attributes": "AccountAttributesProbe.swift", "file-recovery": "EnrollmentFileRecoveryProbe.swift", "cryptographic-inputs": "OwnedCryptographicInputsProbe.swift", "group-avatar-form": "GroupAvatarFormProbe.swift", "group-manifest": "GroupManifestProbe.swift"}[args.probe]
         (work / "main.swift").write_bytes((ROOT / "Scripts/bconnected/tests" / source).read_bytes())
         command += ["-Xcc", "-I" + str(ROOT / "Pods/Headers/Public"), "-o", str(bundle / "native-db"), str(work / "main.swift")]
         subprocess.run(command, check=True, timeout=120)
         env = dict(os.environ, SIMCTL_CHILD_DYLD_FRAMEWORK_PATH=str(work / "Frameworks"))
         launch = ["xcrun", "simctl", "spawn", args.simulator, str(bundle / "native-db")]
-        if args.probe != "file-recovery":
+        if args.probe not in {"file-recovery", "group-manifest"}:
             subprocess.run(launch, env=env, check=True, timeout=60)
             return
         database = work / "enrollment.sqlite"
@@ -94,6 +99,9 @@ def main():
                   "prekeys-dispatch-crash", "verify-prekeys", "prekeys-dispatch-commit-crash", "verify-prekeys-dispatched",
                   "prekeys-ack-crash", "verify-prekeys-dispatched", "prekeys-ack-commit-crash", "verify-prekeys-aci-ack",
                   "prekeys-finish", "verify-prekeys-complete", "prekeys-conflicts", "prekeys-legacy"]
+        if args.probe == "group-manifest":
+            phases = ["initialize", "remember-crash", "verify-absent", "remember-commit-crash", "verify-saved",
+                      "advance-crash", "verify-saved", "advance-commit-crash", "verify-advanced"]
         marker = Path(str(database) + ".kill-point")
         for phase in phases:
             marker.unlink(missing_ok=True)
@@ -108,7 +116,7 @@ def main():
                 print(f"PASS {phase}: deliberate SIGKILL observed", flush=True)
             else:
                 result.check_returncode()
-        print(f"{len(phases)} encrypted-file process phases passed; eighteen verified SIGKILL boundaries; no service readiness release")
+        print(f"{len(phases)} encrypted-file process phases passed; {sum(p.endswith('crash') for p in phases)} verified SIGKILL boundaries; no service readiness release")
 
 if __name__ == "__main__":
     main()
