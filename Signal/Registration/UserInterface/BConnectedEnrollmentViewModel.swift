@@ -12,7 +12,6 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     @Published var code = ""
     @Published var name = ""
     @Published var year = ""
-    @Published var invitation = ""
     @Published var phone = ""
     @Published private(set) var communityProgress: BConnectedCommunityProgress?
     private var community: BConnectedCommunityEnrollmentCoordinator?
@@ -23,7 +22,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
 
     init(info: [String: Any] = Bundle.main.infoDictionary ?? [:], initialRegistration: Bool = true,
          makeCoordinator: (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
-         makeCommunity: ((BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator)? = nil,
+         makeCommunity: ((BConnectedEnrollmentEndpoint, BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator)? = nil,
          makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)? = nil,
          onCompleted: @escaping @MainActor () -> Void = {}) {
         self.makePreparation = makePreparation
@@ -36,22 +35,43 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         do {
             guard let string = info["BConnectedEnrollmentOrigin"] as? String,
                   let url = URL(string: string) else { throw BConnectedEnrollmentError.unavailable }
-            coordinator = makeCoordinator(try BConnectedEnrollmentEndpoint(origin: url))
+            let signupEndpoint = try BConnectedEnrollmentEndpoint(origin: url)
+            coordinator = makeCoordinator(signupEndpoint)
             progress = try coordinator?.progress()
             if let makeCommunity, let coordinator {
                 guard let origin = info["BConnectedCommunityOrigin"] as? String, let url = URL(string: origin) else {
                     throw BConnectedEnrollmentError.unavailable
                 }
-                community = makeCommunity(try BConnectedEnrollmentEndpoint(origin: url), coordinator)
+                community = makeCommunity(try BConnectedEnrollmentEndpoint(origin: url), signupEndpoint, coordinator)
                 communityProgress = try community?.progress()
+                if let saved = communityProgress?.savedApplicationPhone { phone = saved }
+                if let saved = communityProgress?.savedApplicationName { name = saved }
+                if let saved = communityProgress?.savedApplicationYear { year = String(saved) }
             }
         } catch { message = "BConnected signup is not available in this build yet." }
     }
 
-    var canApply: Bool { community != nil && communityProgress?.member == nil && communityProgress?.applicationOutcomeUncertain == false }
-    var memberAllowsVerification: Bool { communityProgress?.member == nil || communityProgress?.member?.status == .approved }
+    var canApply: Bool {
+        community != nil && communityProgress?.member == nil && communityProgress?.phoneSignup == nil
+            && (communityProgress?.applicationOutcomeUncertain == false || communityProgress?.savedApplicationPhone != nil)
+    }
+    var retryPhoneApplication: Bool { communityProgress?.applicationOutcomeUncertain == true && communityProgress?.savedApplicationPhone != nil }
+    var maySendPhoneCode: Bool {
+        communityProgress?.member == nil && communityProgress?.phoneSignup?.hasChallenge == true
+            && communityProgress?.canRestartPhoneSetup != true
+            && communityProgress?.phoneSignup?.phoneVerified != true
+            && communityProgress?.phoneSignup?.nextSmsSeconds == 0
+    }
+    var mayCheckPhoneCode: Bool {
+        communityProgress?.member == nil && communityProgress?.phoneSignup?.hasOperation == true
+            && communityProgress?.phoneSignup?.phoneVerified != true
+            && communityProgress?.phoneSignup?.nextCheckSeconds == 0
+    }
+    var memberAllowsVerification: Bool {
+        communityProgress?.member?.status == .approved && communityProgress?.canRestartPhoneSetup != true
+    }
     var mayConnectMembership: Bool {
-        communityProgress?.member?.status == .approved && progress?.hasApprovedIntentBinding != true
+        memberAllowsVerification && progress?.hasApprovedIntentBinding != true
             && (communityProgress?.intentRetryNotBefore.map { Date() >= $0 } ?? true)
     }
     var mayPublishAccount: Bool {
@@ -78,10 +98,17 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
 
     var title: String {
         guard initialRegistration else { return "Account setup unavailable" }
-        if let member = communityProgress?.member, member.status != .approved { return "Alumni approval" }
-        guard let progress else { return "Welcome to BConnected" }
-        guard progress.hasApprovedIntentBinding else { return "Alumni approval" }
-        guard let observation = progress.lastObservation else { return "Verify your phone" }
+        if let member = communityProgress?.member, member.status != .approved {
+            return member.status == .pending ? "Waiting for approval" : "Membership unavailable"
+        }
+        if communityProgress?.phoneSignup != nil && communityProgress?.member == nil { return "Verify your phone" }
+        guard let progress else {
+            return communityProgress?.member?.status == .approved ? "Set up messaging" : "Welcome to BConnected"
+        }
+        guard progress.hasApprovedIntentBinding else { return "Set up messaging" }
+        guard let observation = progress.lastObservation else {
+            return communityProgress?.savedApplicationPhone == nil ? "Verify your phone" : "Set up messaging"
+        }
         switch observation.state {
         case .verification: return observation.phoneVerified == true ? "Phone verified" : "Verify your phone"
         case .pendingConfirmation: return "Waiting for account confirmation"
@@ -93,20 +120,34 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     var detail: String {
         guard initialRegistration else { return "This pilot supports the first signup on one iPhone per alumnus. Your existing account data has been kept." }
         if communityProgress?.applicationOutcomeUncertain == true {
-            return "Your application may have been received, but we could not save a confirmed response. Contact the alumni administrator before applying again."
+            return communityProgress?.savedApplicationPhone == nil
+                ? "Your previous application may have been received. Contact the alumni administrator before applying again."
+                : "Your phone enrollment may have been received. Retry the same saved request to recover its response. No verification text is sent by this step."
+        }
+        if communityProgress?.canRestartPhoneSetup == true {
+            return "This phone setup session expired. Restart with your phone number to continue. This step does not send a text."
+        }
+        if let signup = communityProgress?.phoneSignup, communityProgress?.member == nil {
+            if signup.phoneVerified { return "Your phone was verified. Check membership status while the service finishes its approval decision." }
+            if signup.smsOutcomeNeedsExplicitDecision {
+                return "We could not confirm whether the SMS request completed. Check status before deciding to send another code."
+            }
+            return "Send a verification code to your saved phone number, then enter it here. Your application will be reviewed after phone verification."
         }
         if let member = communityProgress?.member, member.status != .approved {
             return member.status == .pending ? "Your application is waiting for administrator approval. Check back here to continue." : "Your membership is not approved for messaging. Contact the alumni administrator."
         }
         if communityProgress?.intentOutcomeUncertain == true {
-            return "The approval binding request may have completed. Your device keys are saved. Wait five minutes, check approval, then explicitly retry the binding if needed."
+            return "Your setup request may have gone through. Wait five minutes, check approval, then choose Retry if needed. Your progress is saved."
         }
         if communityProgress?.member?.status == .approved && progress?.hasApprovedIntentBinding != true {
-            return "Your alumni membership is approved. Connect this iPhone and verify your phone number to continue."
+            return communityProgress?.savedApplicationPhone == nil
+                ? "Your alumni membership is approved. Continue setup and verify your phone number."
+                : "Your phone number and alumni membership are verified. Continue setting up messaging on this iPhone."
         }
-        if canApply { return "Use your invitation code to apply with your name and graduation year. An administrator must approve your membership before phone verification." }
-        guard let progress else { return "Signup will verify your alumni membership and phone number. Invitation and approval setup is not available in this build yet." }
-        guard progress.hasApprovedIntentBinding else { return "Your device setup is saved. Alumni approval must be linked before phone verification can begin." }
+        if canApply { return "Enter your phone number, name, and class year. After phone verification, approved numbers can continue; other applications wait for review." }
+        guard let progress else { return "Signup will verify your alumni membership and phone number. Phone enrollment is not available in this build yet." }
+        guard progress.hasApprovedIntentBinding else { return "Your progress is saved. Continue setup after alumni approval is confirmed." }
         if progress.preKeyPublicationBlocked {
             return "This saved device setup needs administrator review before continuing. Messaging remains unavailable. Your keys have been kept."
         }
@@ -149,11 +190,10 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         return true
     }
 
-    func apply() {
-        guard let community, let year = Int(year), canApply else { message = "Enter your full name, graduation year, and invitation code."; return }
-        let name = name, invitation = invitation
-        self.invitation = ""
-        runCommunity { try await community.apply(name: name, year: year, invitation: invitation) }
+    func applyPhone() {
+        guard let community, let year = Int(year), canApply else { message = "Enter your phone number, full name, and class year."; return }
+        let name = name, phone = phone
+        runCommunity { try await community.applyPhone(name: name, year: year, phone: phone) }
     }
 
     func refreshApproval() {
@@ -161,9 +201,37 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         runCommunity { try await community.refreshApproval() }
     }
 
+    func sendPhoneCode(explicitResend: Bool = false) {
+        guard let community, maySendPhoneCode else { return }
+        runCommunity { try await community.sendPhoneCode(explicitlyResendAfterUncertainOutcome: explicitResend) }
+    }
+
+    func checkPhoneCode() {
+        guard let community, mayCheckPhoneCode else { return }
+        let submitted = code
+        code = ""
+        runCommunity { try await community.checkPhoneCode(submitted) }
+    }
+
+    func refreshPhoneVerification() {
+        guard let community, communityProgress?.phoneSignup != nil,
+              communityProgress?.phoneSignup?.hasOperation == true,
+              communityProgress?.member == nil else { return }
+        runCommunity { try await community.refreshPhoneVerification() }
+    }
+
+    func restartExpiredPhoneSetup() {
+        guard !busy, communityProgress?.canRestartPhoneSetup == true else { return }
+        do {
+            try community?.restartExpiredPhoneSetup()
+            communityProgress = try community?.progress()
+            message = nil
+        } catch { message = "The saved phone setup could not be restarted. No enrollment or verification request was sent." }
+    }
+
     func connectMembership(explicitRetry: Bool = false) {
         guard let community, let makePreparation else { return }
-        let phone = phone
+        let phone = communityProgress?.savedApplicationPhone ?? phone
         runCommunity {
             try await community.connectApprovedMembership(preparation: { try await makePreparation(phone) }, explicitlyRetryLostIntent: explicitRetry)
         }
@@ -175,6 +243,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         Task { @MainActor in
             defer { busy = false }
             do { try await action() }
+            catch BConnectedEnrollmentError.phoneEnrollmentRejected {
+                message = "This phone setup is unavailable. Check the number and try again. No verification text was sent."
+            }
             catch { message = "The signup request could not be confirmed. Your saved setup has been kept. Check approval or contact the alumni administrator." }
             do { communityProgress = try community?.progress(); progress = try coordinator?.progress() }
             catch { message = "Saved signup state could not be read. No new attempt will be created." }

@@ -107,7 +107,8 @@ def validate_public_config(config: object) -> dict[str, str]:
             for key, setting in PUBLIC_KEYS.items()}
 
 
-def inspect_bundles(product: Path, config: dict[str, str]) -> None:
+def inspect_bundles(product: Path, config: dict[str, str], marketing_version: str | None = None,
+                    build_number: str | None = None) -> None:
     import plistlib
     for plist in (
         product / "Info.plist",
@@ -116,6 +117,10 @@ def inspect_bundles(product: Path, config: dict[str, str]) -> None:
     ):
         with plist.open("rb") as stream:
             actual = plistlib.load(stream)
+        if marketing_version is not None and actual.get("CFBundleShortVersionString") != marketing_version:
+            raise ValueError(f"DM-alpha bundle version missing or changed: {plist}")
+        if build_number is not None and actual.get("CFBundleVersion") != build_number:
+            raise ValueError(f"DM-alpha build number missing or changed: {plist}")
         for key, setting in PUBLIC_KEYS.items():
             expected = [config[setting]] if key == "BConnectedSenderCertificateTrustRootsBase64" else config[setting]
             if actual.get(key) != expected:
@@ -126,10 +131,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--public-config", required=True, type=Path, help="JSON with the ten explicit public Bundle keys")
     parser.add_argument("--archive", type=Path, help="create a signed .xcarchive using installed Xcode signing assets")
+    parser.add_argument("--marketing-version", help="explicit app version for this artifact, for example 8.30")
+    parser.add_argument("--build-number", help="explicit monotonically increasing build number")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
     try:
         config = validate_public_config(json.loads(args.public_config.read_text()))
+        if args.marketing_version is not None and not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", args.marketing_version):
+            raise ValueError("invalid app marketing version")
+        if args.build_number is not None and (not args.build_number.isascii() or not args.build_number.isdecimal()
+                                             or str(int(args.build_number)) != args.build_number
+                                             or int(args.build_number) < 1):
+            raise ValueError("invalid app build number")
         if args.validate_only:
             print("Validated explicit public DM-alpha configuration; native public-key parsing and live endpoints remain separate checks.")
             return 0
@@ -152,8 +165,12 @@ def main() -> int:
                     "BCONNECTED_SELECTED_ENTITLEMENTS=Scripts/bconnected/DMAlpha.entitlements",
                     "SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) BCONNECTED_MESSAGING_CONFIGURED BCONNECTED_OWNED_LIBSIGNAL"]
         command += [f"{key}={value}" for key, value in config.items()]
+        if args.marketing_version is not None:
+            command.append(f"MARKETING_VERSION={args.marketing_version}")
+        if args.build_number is not None:
+            command.append(f"CURRENT_PROJECT_VERSION={args.build_number}")
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
-        inspect_bundles(product, config)
+        inspect_bundles(product, config, args.marketing_version, args.build_number)
         print(f"Verified explicit public DM-alpha inputs in app and both extensions: {product}")
         return 0
     except subprocess.CalledProcessError as error:

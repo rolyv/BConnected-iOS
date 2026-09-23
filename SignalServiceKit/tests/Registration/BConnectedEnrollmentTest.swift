@@ -931,7 +931,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         XCTAssertTrue(signal.calls.isEmpty)
         #if SWIFT_PACKAGE
         let model = BConnectedEnrollmentViewModel(info: ["BConnectedEnrollmentOrigin": "https://enrollment.example.invalid", "BConnectedCommunityOrigin": "https://community.example.invalid"],
-            makeCoordinator: { _ in enrollment }, makeCommunity: { _, _ in community }, makePreparation: { _ in self.input() })
+            makeCoordinator: { _ in enrollment }, makeCommunity: { _, _, _ in community }, makePreparation: { _ in self.input() })
         XCTAssertEqual(model.title, "Verify your phone")
         XCTAssertFalse(model.canApply)
         XCTAssertFalse(model.maySend)
@@ -953,6 +953,215 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         service.error = nil
         do { try await community.apply(name: "Fixture", year: 2000, invitation: challenge); XCTFail() } catch {}
         XCTAssertEqual(service.applications, 1)
+        XCTAssertNil(keys.bytes)
+    }
+
+    @MainActor
+    func testPhoneEnrollmentPersistsNonceBeforeSendAndRetriesExactFrozenRequest() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        membership.failCommit = true
+        do { try await community.applyPhone(name: "Simulator Test Account", year: 2003, phone: phone); XCTFail() } catch {}
+        XCTAssertEqual(service.applications, 0)
+        membership.failCommit = false
+        service.error = BConnectedEnrollmentError.unavailable
+        do { try await community.applyPhone(name: "Simulator Test Account", year: 2003, phone: phone); XCTFail() } catch {}
+        let frozen = try XCTUnwrap(membership.load().phoneApplication)
+        XCTAssertEqual(frozen.phone, phone)
+        XCTAssertEqual(frozen.fullName, "Simulator Test Account")
+        XCTAssertEqual(frozen.graduationYear, 2003)
+        XCTAssertEqual(frozen.nonce.count, 43)
+        XCTAssertEqual(service.lastPhoneApplication, frozen)
+        XCTAssertTrue(try community.progress().applicationOutcomeUncertain)
+        XCTAssertEqual(try community.progress().savedApplicationPhone, phone)
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        service.error = nil
+        try await community.applyPhone(name: "Changed Name", year: 1999, phone: "+13055559999")
+        XCTAssertEqual(service.applications, 2)
+        XCTAssertEqual(service.lastPhoneApplication, frozen)
+        XCTAssertNil(try community.progress().member)
+        XCTAssertNotNil(try membership.load().phoneChallenge)
+        XCTAssertNil(try membership.load().session)
+        XCTAssertNil(keys.bytes)
+    }
+
+    @MainActor
+    func testPhoneEnrollmentRejectsMismatchedSessionAndPreservesLegacyUncertainRecord() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        service.wrongChallengeStatus = true
+        do { try await community.applyPhone(name: "Fixture", year: 2003, phone: phone); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
+        XCTAssertNil(try membership.load().session)
+        XCTAssertNotNil(try membership.load().phoneApplication)
+        var legacy = BConnectedCommunityRecord()
+        legacy.applicationDispatched = true
+        membership.bytes = try JSONEncoder().encode(legacy)
+        XCTAssertNil(try membership.load().phoneApplication)
+        do { try await community.applyPhone(name: "Fixture", year: 2003, phone: phone); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .immutableConflict) }
+    }
+
+    @MainActor
+    func testDefinitivePhoneDenialClearsOnlyUnboundRequestForCorrection() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service, enrollment: enrollment)
+        service.error = BConnectedEnrollmentError.phoneEnrollmentRejected
+        do { try await community.applyPhone(name: "Fixture", year: 2003, phone: "+13055559999"); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .phoneEnrollmentRejected) }
+        XCTAssertNil(try membership.load().phoneApplication)
+        XCTAssertFalse(try membership.load().applicationDispatched)
+        XCTAssertNil(keys.bytes)
+        service.error = nil
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        XCTAssertEqual(try membership.load().phoneApplication?.phone, phone)
+        XCTAssertNotNil(try community.progress().phoneSignup)
+        XCTAssertNil(try community.progress().member)
+        XCTAssertEqual(service.applications, 2)
+    }
+
+    @MainActor
+    func testOnlyExpiredUnboundPhoneSessionCanExplicitlyRestart() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var date = Date(timeIntervalSince1970: 1_800_000_000)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+                                                                  enrollment: enrollment, now: { date })
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        let oldNonce = try XCTUnwrap(membership.load().phoneApplication?.nonce)
+        XCTAssertFalse(try community.progress().canRestartPhoneSetup)
+        do { try community.restartExpiredPhoneSetup(); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .immutableConflict) }
+        date = Date(timeIntervalSince1970: 1_900_000_001)
+        XCTAssertTrue(try community.progress().canRestartPhoneSetup)
+        try community.restartExpiredPhoneSetup()
+        XCTAssertNil(try community.progress().member)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        XCTAssertNotEqual(try membership.load().phoneApplication?.nonce, oldNonce)
+        XCTAssertNil(try community.progress().member)
+        // Native enrollment state makes the same reset unavailable even if the lease expires.
+        _ = try enrollment.prepare(input())
+        XCTAssertFalse(try community.progress().canRestartPhoneSetup)
+        do { try community.restartExpiredPhoneSetup(); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .immutableConflict) }
+    }
+
+    @MainActor
+    func testPhoneSignupNeverCreatesMembershipBeforeVerificationAndPendingBlocksNativeKeys() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        XCTAssertNil(try community.progress().member)
+        XCTAssertNil(keys.bytes)
+        XCTAssertTrue(signup.operations.isEmpty)
+        try await community.sendPhoneCode()
+        XCTAssertEqual(signup.operations, [.status, .begin, .sendCode])
+        XCTAssertNil(try community.progress().member)
+        XCTAssertNil(keys.bytes)
+        signup.phoneVerified = true; service.phoneVerified = true
+        try await community.checkPhoneCode("123456")
+        XCTAssertEqual(try community.progress().member?.status, .pending)
+        do { try await community.connectApprovedMembership { XCTFail("Pending cannot create native keys"); return self.input() }; XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .approvalBindingRequired) }
+        XCTAssertNil(keys.bytes)
+        service.status = .approved
+        try await community.refreshApproval()
+        XCTAssertEqual(try community.progress().member?.status, .approved)
+        try await community.connectApprovedMembership { self.input() }
+        XCTAssertNotNil(keys.bytes)
+        XCTAssertTrue(try enrollment.progress()!.hasApprovedIntentBinding)
+    }
+
+    @MainActor
+    func testUncertainPhoneSMSNeedsExplicitResendAndStatusNeverSends() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        signup.failOn = .sendCode
+        do { try await community.sendPhoneCode(); XCTFail() } catch {}
+        XCTAssertTrue(try community.progress().phoneSignup!.smsOutcomeNeedsExplicitDecision)
+        XCTAssertEqual(signup.operations, [.status, .begin, .sendCode])
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        signup.failOn = nil
+        try await community.refreshPhoneVerification()
+        XCTAssertEqual(signup.operations, [.status, .begin, .sendCode, .status])
+        XCTAssertTrue(try community.progress().phoneSignup!.smsOutcomeNeedsExplicitDecision)
+        do { try await community.sendPhoneCode(); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .explicitSendRequired) }
+        XCTAssertEqual(signup.operations, [.status, .begin, .sendCode, .status])
+        try await community.sendPhoneCode(explicitlyResendAfterUncertainOutcome: true)
+        XCTAssertEqual(signup.operations, [.status, .begin, .sendCode, .status, .sendCode])
+        XCTAssertFalse(try community.progress().phoneSignup!.smsOutcomeNeedsExplicitDecision)
+        XCTAssertNil(try community.progress().member)
+        XCTAssertNil(keys.bytes)
+    }
+
+    @MainActor
+    func testLostSignupBeginResponseRecoversOperationBeforeSending() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        signup.failOn = .begin
+        do { try await community.sendPhoneCode(); XCTFail() } catch {}
+        XCTAssertEqual(signup.operations, [.status, .begin])
+        XCTAssertNil(try membership.load().phoneSignup)
+        XCTAssertNil(keys.bytes)
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        signup.failOn = nil
+        try await community.sendPhoneCode()
+        XCTAssertEqual(signup.operations, [.status, .begin, .status, .sendCode])
+        XCTAssertEqual(try membership.load().phoneSignup?.operationId, try membership.load().phoneChallenge?.applicationId)
+        XCTAssertNil(try community.progress().member)
+    }
+
+    @MainActor
+    func testLostSignupBeginResponseAfterVerifiedCallbackRecoversMembershipWithoutSMS() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        signup.failOn = .begin
+        do { try await community.sendPhoneCode(); XCTFail() } catch {}
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        signup.failOn = nil; signup.phoneVerified = true; service.phoneVerified = true; service.status = .approved
+        try await community.sendPhoneCode()
+        XCTAssertEqual(signup.operations, [.status, .begin, .status])
+        XCTAssertEqual(try community.progress().member?.status, .approved)
+        XCTAssertNil(keys.bytes)
+    }
+
+    @MainActor
+    func testLostCommunityVerifiedStatusResponseRecoversFromDurablePhoneObservation() async throws {
+        let keys = MemoryStore(), signal = Sender(), membership = CommunityStore(), service = CommunitySender(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: signal)
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        try await community.sendPhoneCode()
+        signup.phoneVerified = true; service.phoneVerified = true; service.status = .approved
+        service.error = BConnectedEnrollmentError.unavailable
+        do { try await community.checkPhoneCode("123456"); XCTFail() } catch {}
+        XCTAssertTrue(try community.progress().phoneSignup!.phoneVerified)
+        XCTAssertNil(try community.progress().member)
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: membership, client: service,
+            signup: signup, enrollment: enrollment)
+        service.error = nil
+        try await community.refreshPhoneVerification()
+        XCTAssertEqual(signup.operations, [.status, .begin, .sendCode, .checkCode, .status])
+        XCTAssertEqual(try community.progress().member?.status, .approved)
         XCTAssertNil(keys.bytes)
     }
 
@@ -1026,6 +1235,38 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         let session = try await client.enroll(name: "Fixture", year: 2000, invite: challenge)
         XCTAssertNil(http.requests.last!.value(forHTTPHeaderField: "Authorization"))
         XCTAssertEqual(http.requests.last!.url?.path, "/v1/enroll")
+        let application = BConnectedCommunityRecord.PhoneApplication(phone: phone, fullName: "Simulator Test Account", graduationYear: 2003, nonce: challenge, createdAtMillis: nil)
+        let phoneMember: [String: Any] = ["id": memberId, "fullName": application.fullName, "graduationYear": 2003, "status": "approved"]
+        let challengeBody: [String: Any] = ["applicationId": operationId, "expiresAt": 1_900_000_000_000, "status": "phone_verification_required"]
+        http.response = (try BConnectedEnrollmentWire.encode(challengeBody), 201)
+        let challengeReceipt = try await client.enrollPhone(application)
+        XCTAssertEqual(challengeReceipt.applicationId, operationId)
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/enroll/phone")
+        XCTAssertEqual(http.requests.last!.httpMethod, "POST")
+        XCTAssertNil(http.requests.last!.value(forHTTPHeaderField: "Authorization"))
+        let phoneBody = try BConnectedEnrollmentWire.object(http.requests.last!.httpBody!)
+        XCTAssertEqual(Set(phoneBody.keys), ["phoneNumber", "fullName", "graduationYear", "enrollmentNonce"])
+        XCTAssertEqual(phoneBody["phoneNumber"] as? String, phone)
+        XCTAssertEqual(phoneBody["enrollmentNonce"] as? String, challenge)
+        http.response = (try BConnectedEnrollmentWire.encode(challengeBody), 200)
+        if case .challenge(let pending) = try await client.phoneStatus(nonce: challenge) {
+            XCTAssertEqual(pending, challengeReceipt)
+        } else { XCTFail("Unverified challenge is not membership") }
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/enroll/phone/status")
+        XCTAssertEqual(http.requests.last!.value(forHTTPHeaderField: "Authorization"), "Bearer " + challenge)
+        http.response = (try BConnectedEnrollmentWire.encode(["token": challenge, "expiresAt": 1_900_000_000_000, "member": phoneMember]), 200)
+        if case .verified(let verified) = try await client.phoneStatus(nonce: challenge) {
+            XCTAssertEqual(verified.member.status, .approved)
+        } else { XCTFail("Verified response not parsed") }
+        http.response = (try BConnectedEnrollmentWire.encode(["token": challenge, "expiresAt": 1_900_000_000_000, "member": member]), 201)
+        do { _ = try await client.enrollPhone(application); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
+        http.response = (try BConnectedEnrollmentWire.encode(["error": "Enrollment unavailable"]), 409)
+        do { _ = try await client.enrollPhone(application); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .phoneEnrollmentRejected) }
+        http.response = (try BConnectedEnrollmentWire.encode(["error": "Enrollment unavailable", "extra": true]), 409)
+        do { _ = try await client.enrollPhone(application); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .unavailable) }
         http.response = (try BConnectedEnrollmentWire.encode(member), 200)
         _ = try await client.member(token: session.token)
         XCTAssertEqual(http.requests.last!.httpMethod, "GET")
@@ -1043,6 +1284,38 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         http.response = (Data("{\"error\":\"private IAM detail\"}".utf8), 401)
         do { _ = try await client.member(token: session.token); XCTFail() }
         catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .unavailable) }
+    }
+
+    func testSignupClientExactPreMembershipRoutesAndStrictVerificationOnlyResponse() async throws {
+        let http = CommunityHTTP()
+        let client = BConnectedPhoneSignupClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid")!), http: http)
+        let application = BConnectedCommunityRecord.PhoneApplication(phone: phone, fullName: "Fixture", graduationYear: 2003, nonce: challenge, createdAtMillis: nil)
+        let receipt = BConnectedCommunityRecord.PhoneChallenge(applicationId: operationId, expiresAt: 1_900_000_000_000)
+        let body: [String: Any] = ["operationId": operationId, "state": "verification", "phoneVerified": false,
+                                   "nextSmsSeconds": 0, "nextCheckSeconds": 0, "expiresInSeconds": 600, "registrationAuthorized": false]
+        http.response = (try BConnectedEnrollmentWire.encode(body), 200)
+        _ = try await client.send(.begin, application: application, challenge: receipt, code: nil)
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/bconnected/signup/begin")
+        XCTAssertEqual(Set(try BConnectedEnrollmentWire.object(http.requests.last!.httpBody!).keys),
+                       ["applicationId", "enrollmentNonce", "phoneNumber"])
+        http.response = (try BConnectedEnrollmentWire.encode(["code": "ENROLLMENT_UNAVAILABLE"]), 404)
+        do { _ = try await client.send(.status, application: application, challenge: receipt, code: nil); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .rejected(.enrollmentUnavailable, retryAfterSeconds: nil)) }
+        http.response = (try BConnectedEnrollmentWire.encode(["code": "ENROLLMENT_UNAVAILABLE", "extra": true]), 404)
+        do { _ = try await client.send(.status, application: application, challenge: receipt, code: nil); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .unavailable) }
+        http.response = (try BConnectedEnrollmentWire.encode(body), 200)
+        _ = try await client.send(.sendCode, application: application, challenge: receipt, code: nil)
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/bconnected/signup/\(operationId)/send-code")
+        _ = try await client.send(.checkCode, application: application, challenge: receipt, code: "123456")
+        XCTAssertEqual(http.requests.last!.url?.path, "/v1/bconnected/signup/\(operationId)/check-code")
+        XCTAssertEqual(Set(try BConnectedEnrollmentWire.object(http.requests.last!.httpBody!).keys),
+                       ["applicationId", "enrollmentNonce", "phoneNumber", "code"])
+        do { _ = try await client.send(.checkCode, application: application, challenge: receipt, code: "abc"); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidInput) }
+        http.response = (try BConnectedEnrollmentWire.encode(body.merging(["registrationAuthorized": true]) { _, new in new }), 200)
+        do { _ = try await client.send(.status, application: application, challenge: receipt, code: nil); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
     }
 
     func testRequestIsExplicitOwnedHTTPSAndNeverSerializesPrivateMaterial() throws {
@@ -1273,6 +1546,10 @@ private final class CommunitySender: BConnectedCommunitySending {
     var applications = 0
     var intents = 0
     var wrongMember = false
+    var wrongPhoneToken = false
+    var wrongChallengeStatus = false
+    var phoneVerified = false
+    var lastPhoneApplication: BConnectedCommunityRecord.PhoneApplication?
     var beforeIntent: ((BConnectedEnrollmentIntentMaterial) throws -> Void)?
     let id = "00000000-0000-4000-8000-000000000001"
     let challenge = "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
@@ -1280,13 +1557,51 @@ private final class CommunitySender: BConnectedCommunitySending {
         applications += 1; if let error { throw error }
         return .init(token: challenge, expiresAt: 1_900_000_000_000, member: .init(id: id, fullName: name, graduationYear: year, status: .pending))
     }
+    func enrollPhone(_ application: BConnectedCommunityRecord.PhoneApplication) async throws -> BConnectedCommunityRecord.PhoneChallenge {
+        applications += 1; lastPhoneApplication = application
+        if let error { throw error }
+        if wrongChallengeStatus { throw BConnectedEnrollmentError.invalidResponse }
+        return .init(applicationId: "00000000-0000-4000-8000-000000000010", expiresAt: 1_900_000_000_000)
+    }
+    func phoneStatus(nonce: String) async throws -> BConnectedPhoneCommunityStatus {
+        if let error { throw error }
+        guard let application = lastPhoneApplication else { throw BConnectedEnrollmentError.invalidResponse }
+        if phoneVerified {
+            return .verified(.init(token: wrongPhoneToken ? challenge : application.nonce, expiresAt: 1_900_000_000_000,
+                member: .init(id: id, fullName: application.fullName, graduationYear: application.graduationYear, status: status)))
+        }
+        return .challenge(.init(applicationId: "00000000-0000-4000-8000-000000000010", expiresAt: 1_900_000_000_000))
+    }
     func member(token: String) async throws -> BConnectedCommunityMember {
         if let error { throw error }
-        return .init(id: id, fullName: "Fixture", graduationYear: 2000, status: status)
+        return .init(id: id, fullName: lastPhoneApplication?.fullName ?? "Fixture",
+                     graduationYear: lastPhoneApplication?.graduationYear ?? 2000, status: status)
     }
     func intent(token: String, material: BConnectedEnrollmentIntentMaterial) async throws -> BConnectedCommunityRecord.Binding {
         intents += 1; try beforeIntent?(material); if let error { throw error }
         return .init(memberId: wrongMember ? "00000000-0000-4000-8000-000000000002" : id, bindingChallenge: challenge, expiresAt: 1_900_000_000_000)
+    }
+}
+private final class PhoneSignupSender: BConnectedPhoneSignupSending {
+    var operations: [BConnectedPhoneSignupOperation] = []
+    var failOn: BConnectedPhoneSignupOperation?
+    var begun = false
+    var phoneVerified = false
+    var nextSmsSeconds = 0
+    var nextCheckSeconds = 0
+    func send(_ operation: BConnectedPhoneSignupOperation, application: BConnectedCommunityRecord.PhoneApplication,
+              challenge: BConnectedCommunityRecord.PhoneChallenge, code: String?) async throws -> BConnectedPhoneSignupObservation {
+        operations.append(operation)
+        if operation == .status && !begun {
+            throw BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil)
+        }
+        if operation == .begin { begun = true }
+        if operation == failOn { throw BConnectedEnrollmentError.unavailable }
+        if operation == .checkCode {
+            guard code == "123456" else { throw BConnectedEnrollmentError.invalidInput }
+        } else { XCTAssertNil(code) }
+        return .init(operationId: challenge.applicationId, phoneVerified: phoneVerified,
+                     nextSmsSeconds: nextSmsSeconds, nextCheckSeconds: nextCheckSeconds, expiresInSeconds: 600)
     }
 }
 private final class CommunityHTTP: BConnectedOwnedHTTPSending {

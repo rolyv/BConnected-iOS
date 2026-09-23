@@ -7,6 +7,8 @@ import LibSignalClient
 /// Sanitized failures only; associated values must never contain wire bodies or credentials.
 public enum BConnectedEnrollmentError: Error, Equatable {
     case invalidInput, invalidResponse, persistenceUnavailable, immutableConflict, unavailable
+    /// Exact no-mutation denial from the owned phone-bootstrap route only.
+    case phoneEnrollmentRejected
     case missingAttempt, approvalBindingRequired, operationRequired, explicitSendRequired, busy
     case explicitPublicationRetryRequired, uncertainPreKeyPublication
     case rejected(Code, retryAfterSeconds: Int?)

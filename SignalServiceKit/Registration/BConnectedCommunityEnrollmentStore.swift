@@ -21,7 +21,10 @@ final class BConnectedCommunityEnrollmentStore: BConnectedCommunityPersistence {
     }
 }
 extension BConnectedCommunityEnrollmentCoordinator {
-    public convenience init(db: any DB, endpoint: BConnectedEnrollmentEndpoint, enrollment: BConnectedEnrollmentCoordinator) {
-        self.init(persistence: BConnectedCommunityEnrollmentStore(db: db), client: BConnectedCommunityClient(endpoint: endpoint), enrollment: enrollment)
+    public convenience init(db: any DB, endpoint: BConnectedEnrollmentEndpoint, signupEndpoint: BConnectedEnrollmentEndpoint,
+                            enrollment: BConnectedEnrollmentCoordinator) {
+        self.init(persistence: BConnectedCommunityEnrollmentStore(db: db),
+                  client: BConnectedCommunityClient(endpoint: endpoint),
+                  signup: BConnectedPhoneSignupClient(endpoint: signupEndpoint), enrollment: enrollment)
     }
 }

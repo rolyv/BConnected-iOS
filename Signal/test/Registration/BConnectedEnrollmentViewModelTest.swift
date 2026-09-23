@@ -11,9 +11,9 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
     func testDeferredAccountFlowsDoNotConstructServicesEvenWithValidOrigins() {
         let model = BConnectedEnrollmentViewModel(info: ["BConnectedEnrollmentOrigin": "https://enrollment.example.invalid", "BConnectedCommunityOrigin": "https://community.example.invalid"], initialRegistration: false,
             makeCoordinator: { _ in fatalError("Deferred flow must not construct enrollment") },
-            makeCommunity: { _, _ in fatalError("Deferred flow must not construct membership") })
+            makeCommunity: { _, _, _ in fatalError("Deferred flow must not construct membership") })
         model.perform(.begin)
-        model.apply()
+        model.applyPhone()
         model.connectMembership()
         model.publishAccount()
         model.publishPreKeys()

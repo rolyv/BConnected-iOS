@@ -48,8 +48,9 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
     }
 
     @MainActor
-    public func makeBConnectedCommunityCoordinator(endpoint: BConnectedEnrollmentEndpoint, enrollment: BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator {
-        BConnectedCommunityEnrollmentCoordinator(db: deps.db, endpoint: endpoint, enrollment: enrollment)
+    public func makeBConnectedCommunityCoordinator(endpoint: BConnectedEnrollmentEndpoint, signupEndpoint: BConnectedEnrollmentEndpoint,
+                                                    enrollment: BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator {
+        BConnectedCommunityEnrollmentCoordinator(db: deps.db, endpoint: endpoint, signupEndpoint: signupEndpoint, enrollment: enrollment)
     }
 
     @MainActor

@@ -7,7 +7,7 @@ import UIKit
 /// Owned enrollment has no escape into legacy registration, linking, or recovery.
 final class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollmentView> {
     init(initialRegistration: Bool, makeCoordinator: @MainActor (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
-         makeCommunity: @escaping @MainActor (BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator,
+         makeCommunity: @escaping @MainActor (BConnectedEnrollmentEndpoint, BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator,
          makePreparation: @escaping @MainActor (String) async throws -> BConnectedEnrollmentPreparation,
          onCompleted: @escaping @MainActor () -> Void) {
         let model = BConnectedEnrollmentViewModel(initialRegistration: initialRegistration, makeCoordinator: makeCoordinator,
@@ -21,6 +21,7 @@ final class BConnectedEnrollmentViewController: UIHostingController<BConnectedEn
 struct BConnectedEnrollmentView: View {
     @ObservedObject var model: BConnectedEnrollmentViewModel
     @State private var confirmResend = false
+    @State private var confirmPhoneResend = false
     @State private var confirmIntentRetry = false
     @State private var confirmPublicationRetry = false
     var body: some View {
@@ -30,26 +31,47 @@ struct BConnectedEnrollmentView: View {
                 Text(model.title).font(.largeTitle).bold()
                 Text(model.detail)
                 if model.canApply {
-                    TextField("Full name", text: $model.name).textContentType(.name)
-                    TextField("Graduation year", text: $model.year).keyboardType(.numberPad)
-                    SecureField("Invitation code", text: $model.invitation).textInputAutocapitalization(.never)
-                    Button("Request alumni approval") { model.apply() }
+                    TextField("Phone number, including +country code", text: $model.phone)
+                        .keyboardType(.phonePad).textContentType(.telephoneNumber).disabled(model.retryPhoneApplication)
+                    TextField("Full name", text: $model.name).textContentType(.name).disabled(model.retryPhoneApplication)
+                    TextField("Class year", text: $model.year).keyboardType(.numberPad).disabled(model.retryPhoneApplication)
+                    Button(model.retryPhoneApplication ? "Retry saved request" : "Continue") { model.applyPhone() }
                 }
-                if model.communityProgress?.member != nil {
+                if model.communityProgress?.phoneSignup != nil && model.communityProgress?.member == nil {
+                    if model.maySendPhoneCode {
+                        Button(model.communityProgress?.phoneSignup?.smsOutcomeNeedsExplicitDecision == true ? "Send another code…" : "Send verification code") {
+                            if model.communityProgress?.phoneSignup?.smsOutcomeNeedsExplicitDecision == true { confirmPhoneResend = true }
+                            else { model.sendPhoneCode() }
+                        }
+                    }
+                    if model.mayCheckPhoneCode {
+                        TextField("Verification code", text: $model.code).keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        Button("Verify phone number") { model.checkPhoneCode() }
+                    }
+                    if model.communityProgress?.phoneSignup?.hasOperation == true {
+                        Button(model.communityProgress?.phoneSignup?.phoneVerified == true ? "Check membership status" : "Check verification status") {
+                            model.refreshPhoneVerification()
+                        }
+                    }
+                }
+                if model.communityProgress?.canRestartPhoneSetup == true {
+                    Button("Restart expired phone setup") { model.restartExpiredPhoneSetup() }
+                }
+                if model.communityProgress?.member != nil && model.communityProgress?.canRestartPhoneSetup != true {
                     Button("Check alumni approval") { model.refreshApproval() }
                 }
                 if model.mayConnectMembership {
-                    if model.progress == nil {
+                    if model.progress == nil && model.communityProgress?.savedApplicationPhone == nil {
                         TextField("Phone number, including +country code", text: $model.phone).keyboardType(.phonePad).textContentType(.telephoneNumber)
                     }
-                    Button(model.communityProgress?.intentOutcomeUncertain == true ? "Retry approval binding…" : "Connect approved membership") {
+                    Button(model.communityProgress?.intentOutcomeUncertain == true ? "Retry setup…" : "Set up messaging") {
                         if model.communityProgress?.intentOutcomeUncertain == true { confirmIntentRetry = true }
                         else { model.connectMembership() }
                     }
                 }
                 if let progress = model.progress {
                     if progress.hasApprovedIntentBinding && !progress.hasOperation && model.memberAllowsVerification {
-                        Button("Start phone verification") { model.perform(.begin) }
+                        Button(model.communityProgress?.savedApplicationPhone == nil ? "Start phone verification" : "Continue messaging setup") { model.perform(.begin) }
                     }
                     if model.maySend {
                         Button(progress.smsOutcomeNeedsExplicitDecision ? "Send another code…" : "Send SMS code") {
@@ -101,12 +123,16 @@ struct BConnectedEnrollmentView: View {
             Button("Retry saved publication") { model.publishAccount(explicitRetry: true) }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog("Request a new approval binding after the previous request's waiting period?", isPresented: $confirmIntentRetry) {
-            Button("Retry approval binding") { model.connectMembership(explicitRetry: true) }
+        .confirmationDialog("Your previous setup request may have gone through. Retry it after the waiting period?", isPresented: $confirmIntentRetry) {
+            Button("Retry setup") { model.connectMembership(explicitRetry: true) }
             Button("Cancel", role: .cancel) {}
         }
         .confirmationDialog("Send another SMS? The previous message may still arrive.", isPresented: $confirmResend) {
             Button("Send another code") { model.perform(.sendCode, explicitResend: true) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Send another verification text? The previous message may still arrive.", isPresented: $confirmPhoneResend) {
+            Button("Send another code") { model.sendPhoneCode(explicitResend: true) }
             Button("Cancel", role: .cancel) {}
         }
     }
