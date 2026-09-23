@@ -8,6 +8,22 @@ import LibSignalClient
 /// First-install self-recipient preparation only. No merging, profile mutation, caches, completion
 /// callbacks, block clearing, storage service, networking, or registration-state publication.
 enum BConnectedLocalAccountSetup {
+    /// The same SQLCipher transaction checks the frozen journal before and after native validation.
+    /// Only completed journals may enter the existing read-only native repeat paths.
+    static func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration,
+        expected: BConnectedEnrollmentRecord?, tx: DBWriteTransaction,
+        validateNative: () throws -> BConnectedEnrollmentRecord
+    ) throws -> BConnectedEnrollmentRecord {
+        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        guard let bytes = values.getData("attempt", transaction: tx) else { throw BConnectedEnrollmentError.missingAttempt }
+        let original = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
+        try original.validateAccountAcceptance(configuration: configuration, expected: expected)
+        let validated = try validateNative()
+        try validated.validateAccountAcceptance(configuration: configuration, expected: original)
+        guard values.getData("attempt", transaction: tx) == bytes else { throw BConnectedEnrollmentError.immutableConflict }
+        return validated
+    }
+
     /// The caller revalidates native state in this same rollback-on-error transaction first.
     static func transitionPublication(record: BConnectedEnrollmentRecord, expected: BConnectedEnrollmentRecord,
         step: BConnectedPublicationStep, acknowledge: Bool, tx: DBWriteTransaction

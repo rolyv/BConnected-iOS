@@ -19,6 +19,16 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     }
     var supportsNativeInstallation: Bool { nativeInstaller != nil }
 
+    func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord {
+        guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
+        return try db.writeWithRollbackIfThrows { tx in
+            try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: configuration, expected: expected, tx: tx) {
+                let current = try preparePublication(configuration: configuration, tx: tx)
+                return try nativeInstaller.preparePreKeys(record: current, configuration: configuration, tx: tx)
+            }
+        }
+    }
+
     private func preparePublication(configuration: BConnectedPublicationConfiguration, tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
         guard let nativeInstaller, let accountKeyStore, let udManager,
               publicationConfiguration?.hash == configuration.hash else { throw BConnectedEnrollmentError.unavailable }
@@ -137,7 +147,8 @@ extension BConnectedEnrollmentCoordinator {
         self.init(persistence: BConnectedEnrollmentStore(db: db, nativeInstaller: nativeInstaller, accountKeyStore: accountKeyStore,
                   publicationConfiguration: publicationConfiguration, udManager: udManager), client: BConnectedEnrollmentClient(endpoint: endpoint),
                   publicationConfiguration: publicationConfiguration, publisher: publicationConfiguration.map { _ in BConnectedPublicationClient() },
-                  preKeyPublisher: publicationConfiguration.map { _ in BConnectedPreKeyClient() })
+                  preKeyPublisher: publicationConfiguration.map { _ in BConnectedPreKeyClient() },
+                  acceptanceReader: publicationConfiguration.map { _ in BConnectedAccountAcceptanceClient() })
     }
 }
 

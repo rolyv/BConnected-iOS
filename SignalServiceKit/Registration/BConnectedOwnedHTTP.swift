@@ -7,7 +7,7 @@ protocol BConnectedOwnedHTTPSending {
 
 /// Shared restrictive transport for the separately configured community and enrollment origins.
 final class BConnectedOwnedHTTP: BConnectedOwnedHTTPSending {
-    enum ResponseMode { case enrollmentJSON, emptyPublication }
+    enum ResponseMode { case enrollmentJSON, emptyPublication, accountJSON }
     private final class NoRedirects: NSObject, URLSessionTaskDelegate {
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
@@ -39,10 +39,12 @@ final class BConnectedOwnedHTTP: BConnectedOwnedHTTPSending {
             defer { bytes.task.cancel() }
             guard let response = response as? HTTPURLResponse, response.url == request.url,
                   response.expectedContentLength <= BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }
-            if responseMode == .enrollmentJSON {
+            if responseMode != .emptyPublication {
                 guard response.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json",
-                  response.value(forHTTPHeaderField: "Cache-Control")?.lowercased().split(separator: ",").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "no-store" }) == true,
                   response.expectedContentLength <= BConnectedEnrollmentWire.maximumBytes else { throw BConnectedEnrollmentError.invalidResponse }
+            }
+            if responseMode == .enrollmentJSON {
+                guard response.value(forHTTPHeaderField: "Cache-Control")?.lowercased().split(separator: ",").contains(where: { $0.trimmingCharacters(in: .whitespaces) == "no-store" }) == true else { throw BConnectedEnrollmentError.invalidResponse }
             }
             var data = Data()
             for try await byte in bytes {

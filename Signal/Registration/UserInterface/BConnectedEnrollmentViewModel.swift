@@ -63,6 +63,12 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             && progress?.preKeyPublicationBlocked != true
     }
 
+    var mayVerifyPublishedAccount: Bool {
+        coordinator?.supportsAccountAcceptance == true && memberAllowsVerification && progress?.lastObservation?.state == .active
+            && progress?.accountPublicationComplete == true && progress?.preKeyPublicationComplete == true
+            && progress?.preKeyPublicationBlocked != true
+    }
+
     var title: String {
         guard initialRegistration else { return "Account setup unavailable" }
         if let member = communityProgress?.member, member.status != .approved { return "Alumni approval" }
@@ -201,6 +207,20 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             defer { busy = false }
             do { try await coordinator.publishPreKeys() }
             catch { message = "Device setup could not be confirmed. Your saved keys have been kept. Contact the alumni administrator before continuing." }
+            do { progress = try coordinator.progress() }
+            catch { message = "Saved signup state could not be read. No new attempt will be created." }
+        }
+    }
+
+    func verifyPublishedAccount() {
+        guard !busy, mayVerifyPublishedAccount, let coordinator else { return }
+        busy = true; message = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                try await coordinator.verifyPublishedAccount()
+                message = "The service returned this iPhone's saved account and profile. Messaging remains unavailable while the remaining setup is completed."
+            } catch { message = "The saved account and profile could not be verified. Your setup has been kept. Check status before trying again." }
             do { progress = try coordinator.progress() }
             catch { message = "Saved signup state could not be read. No new attempt will be created." }
         }

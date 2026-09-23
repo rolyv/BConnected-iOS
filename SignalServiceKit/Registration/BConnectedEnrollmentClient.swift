@@ -95,6 +95,102 @@ final class BConnectedPreKeyClient: BConnectedPreKeySending {
     }
 }
 
+enum BConnectedAccountAcceptanceStep: CaseIterable { case identity, profile }
+
+protocol BConnectedAccountAcceptanceReading {
+    func read(_ step: BConnectedAccountAcceptanceStep, record: BConnectedEnrollmentRecord,
+              configuration: BConnectedPublicationConfiguration) async throws
+}
+
+/// Reads back the first account and encrypted profile from the same frozen owned origin.
+/// Successful reads are an observation only: no credential, lifecycle or readiness capability.
+final class BConnectedAccountAcceptanceClient: BConnectedAccountAcceptanceReading {
+    private let http: any BConnectedOwnedHTTPSending
+    init(http: any BConnectedOwnedHTTPSending = BConnectedOwnedHTTP(responseMode: .accountJSON)) { self.http = http }
+
+    func request(_ step: BConnectedAccountAcceptanceStep, record: BConnectedEnrollmentRecord,
+                 configuration: BConnectedPublicationConfiguration) throws -> URLRequest {
+        try record.validateAccountAcceptance(configuration: configuration)
+        let account = record.installedAccount!
+        let profile = try BConnectedEnrollmentWire.object(record.publication!.encryptedProfile)
+        var components = URLComponents(url: configuration.origin, resolvingAgainstBaseURL: false)!
+        components.path = step == .identity ? "/v1/accounts/whoami" : "/v1/profile/\(account.aci)/\(try BConnectedEnrollmentWire.text(profile["version"]))"
+        var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Basic " + Data((account.aci + ":" + record.password).utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        request.setValue(record.originalUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(record.originalSignalAgent, forHTTPHeaderField: "X-Signal-Agent")
+        return request
+    }
+
+    func read(_ step: BConnectedAccountAcceptanceStep, record: BConnectedEnrollmentRecord,
+              configuration: BConnectedPublicationConfiguration) async throws {
+        let (data, status) = try await http.send(request(step, record: record, configuration: configuration))
+        try Task.checkCancellation()
+        let publication = record.publication!
+        let registration = try BConnectedEnrollmentWire.object(record.registrationRequest)
+        try Self.validateResponse(data, status: status, step: step, account: record.installedAccount!,
+            attributes: publication.accountAttributes, profile: publication.encryptedProfile,
+            identityKey: BConnectedEnrollmentWire.base64(registration["aciIdentityKey"]))
+    }
+
+    /// Public wire inputs only, also used by the Java serializer interoperability fixture.
+    /// The caller's durable/native checks remain necessary; this parser creates no authorization.
+    static func validateResponse(_ data: Data, status: Int, step: BConnectedAccountAcceptanceStep,
+        account: BConnectedEnrollmentObservation.Account, attributes: Data, profile: Data, identityKey: Data
+    ) throws {
+        do {
+            guard status == 200 else { throw BConnectedEnrollmentError.invalidResponse }
+            let response = try BConnectedEnrollmentWire.object(data)
+            let attributes = try BConnectedEnrollmentWire.object(attributes)
+            guard let capabilities = attributes["capabilities"] as? [String: Any] else { throw BConnectedEnrollmentError.invalidResponse }
+            func absent(_ field: String) -> Bool { response[field] == nil || response[field] is NSNull }
+            guard try BConnectedEnrollmentWire.uuid(response["uuid"]) == account.aci else { throw BConnectedEnrollmentError.invalidResponse }
+            switch step {
+            case .identity:
+                _ = try BConnectedEnrollmentWire.fields(response, required: ["uuid", "number", "pni", "storageCapable", "entitlements"],
+                    optional: ["usernameHash", "usernameLinkHandle", "authCredentialSalt"])
+                guard try BConnectedEnrollmentWire.text(response["number"]) == account.number,
+                      try BConnectedEnrollmentWire.uuid(response["pni"]) == account.pni,
+                      try BConnectedEnrollmentWire.boolean(response["storageCapable"]) == (capabilities["storage"] as? Bool ?? false),
+                      response["entitlements"] is [String: Any], absent("usernameHash"), absent("usernameLinkHandle"), absent("authCredentialSalt") else {
+                    throw BConnectedEnrollmentError.invalidResponse
+                }
+                // Entitlements are deliberately not consumed or converted into any local grant.
+            case .profile:
+                _ = try BConnectedEnrollmentWire.fields(response,
+                    required: ["uuid", "identityKey", "unidentifiedAccess", "unrestrictedUnidentifiedAccess", "capabilities", "badges", "phoneNumberSharing"],
+                    optional: ["name", "about", "aboutEmoji", "avatar", "paymentAddress"])
+                let uak = try BConnectedEnrollmentWire.base64(attributes["unidentifiedAccessKey"])
+                let checksum = Data(HMAC<SHA256>.authenticationCode(for: Data(repeating: 0, count: 32), using: SymmetricKey(data: uak)))
+                guard try BConnectedEnrollmentWire.base64(response["identityKey"]) == identityKey,
+                      try BConnectedEnrollmentWire.base64(response["unidentifiedAccess"]) == checksum,
+                      try BConnectedEnrollmentWire.boolean(response["unrestrictedUnidentifiedAccess"]) == false,
+                      (response["badges"] as? [Any])?.isEmpty == true, absent("avatar"), absent("paymentAddress") else {
+                    throw BConnectedEnrollmentError.invalidResponse
+                }
+                let visible: Set<String> = ["attachmentBackfill", "spqr", "profiles_v2", "usernameChangeSyncMessage"]
+                let received = try BConnectedEnrollmentWire.fields(response["capabilities"], required: visible)
+                for name in visible {
+                    guard try BConnectedEnrollmentWire.boolean(received[name]) == (capabilities[name] as? Bool ?? false) else {
+                        throw BConnectedEnrollmentError.invalidResponse
+                    }
+                }
+                let profile = try BConnectedEnrollmentWire.object(profile)
+                for name in ["name", "about", "aboutEmoji", "phoneNumberSharing"] {
+                    if let expected = profile[name] {
+                        guard try BConnectedEnrollmentWire.base64(response[name]) == BConnectedEnrollmentWire.base64(expected) else {
+                            throw BConnectedEnrollmentError.invalidResponse
+                        }
+                    } else if !absent(name) { throw BConnectedEnrollmentError.invalidResponse }
+                }
+            }
+        } catch { throw BConnectedEnrollmentError.invalidResponse }
+    }
+}
+
 protocol BConnectedEnrollmentSending {
     func send(_ operation: BConnectedEnrollmentOperation, record: BConnectedEnrollmentRecord, code: String?) async throws -> BConnectedEnrollmentObservation
 }

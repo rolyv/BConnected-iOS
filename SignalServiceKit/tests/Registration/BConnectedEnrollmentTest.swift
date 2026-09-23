@@ -2,6 +2,7 @@
 import Foundation
 import XCTest
 import LibSignalClient
+import CryptoKit
 @testable import SignalServiceKit
 
 // Test-instance state is immutable; mutable protocol fixtures are scoped to individual tests.
@@ -54,6 +55,172 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         let publisher = PreKeySender()
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: configuration, preKeyPublisher: publisher)
         return (store, sender, publisher, coordinator, configuration)
+    }
+
+    @MainActor
+    private func acceptanceFixture() async throws -> (MemoryStore, Sender, AcceptanceReader, BConnectedEnrollmentCoordinator, BConnectedPublicationConfiguration) {
+        let (store, sender, _, initial, configuration) = try await preKeyFixture()
+        try await initial.publishPreKeys()
+        sender.calls = []
+        let reader = AcceptanceReader()
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender,
+            publicationConfiguration: configuration, acceptanceReader: reader)
+        return (store, sender, reader, coordinator, configuration)
+    }
+
+    @MainActor
+    func testAccountAcceptanceAlwaysFreshNeverWritesAnAcceptanceOrResendsKeys() async throws {
+        let (store, sender, reader, coordinator, configuration) = try await acceptanceFixture()
+        let original = store.bytes
+        try await coordinator.verifyPublishedAccount()
+        XCTAssertEqual(sender.calls, [.status]); XCTAssertEqual(reader.steps, [.identity, .profile])
+        XCTAssertEqual(store.bytes, original)
+        let reopened = MemoryStore(); reopened.bytes = original; reopened.supportsNativeInstallation = true
+        let next = BConnectedEnrollmentCoordinator(persistence: reopened, client: sender, publicationConfiguration: configuration, acceptanceReader: reader)
+        try await next.verifyPublishedAccount()
+        XCTAssertEqual(sender.calls, [.status, .status]); XCTAssertEqual(reader.steps, [.identity, .profile, .identity, .profile])
+        XCTAssertEqual(reopened.bytes, original)
+    }
+
+    @MainActor
+    func testAccountAcceptanceRechecksOriginalContextAcrossStatusAndEveryRead() async throws {
+        for boundary in 0...2 {
+            let (store, sender, reader, coordinator, _) = try await acceptanceFixture()
+            let change = { try store.transaction { $0!.sendNeedsExplicitDecision.toggle() } }
+            if boundary == 0 { sender.beforeReturn = { try! change() } }
+            else { reader.beforeReturn = { step in if (boundary == 1 && step == .identity) || (boundary == 2 && step == .profile) { try change() } } }
+            do { try await coordinator.verifyPublishedAccount(); XCTFail("changed original context accepted") } catch {}
+            XCTAssertEqual(reader.steps.count, boundary)
+        }
+    }
+
+    @MainActor
+    func testAccountAcceptanceRejectsIncompleteLegacyAndChangedConfigurationBeforeRequests() async throws {
+        for mutation in 0...3 {
+            let (store, sender, reader, coordinator, _) = try await acceptanceFixture()
+            try store.transaction { value in
+                switch mutation {
+                case 0: value!.preKeyPublication!.pni.state = .dispatched
+                case 1:
+                    let keys = value!.preKeyPublication!
+                    value!.preKeyPublication = .init(version: 1, route: nil, contextHash: try value!.preKeyContextHash(), aci: keys.aci, pni: keys.pni)
+                case 2: value!.observation = try observation("suspended")
+                default: value!.preKeyPublication = nil
+                }
+            }
+            do { try await coordinator.verifyPublishedAccount(); XCTFail() } catch {}
+            XCTAssertTrue(sender.calls.isEmpty); XCTAssertTrue(reader.steps.isEmpty)
+        }
+        let (store, sender, reader, _, configuration) = try await acceptanceFixture()
+        let other = try BConnectedPublicationConfiguration(origin: configuration.origin, authorityCommitment: Data(repeating: 2, count: 32))
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: other, acceptanceReader: reader)
+        do { try await coordinator.verifyPublishedAccount(); XCTFail() } catch {}
+        XCTAssertTrue(sender.calls.isEmpty); XCTAssertTrue(reader.steps.isEmpty)
+    }
+
+    @MainActor
+    func testAccountAcceptanceSuspensionLossAndLocalFailureDoNotContinueOrCacheSuccess() async throws {
+        let (store, sender, reader, coordinator, _) = try await acceptanceFixture()
+        let original = store.bytes
+        sender.result = try observation("suspended")
+        do { try await coordinator.verifyPublishedAccount(); XCTFail() } catch {}
+        XCTAssertTrue(reader.steps.isEmpty)
+        store.bytes = original; sender.result = try observation("active")
+        reader.beforeReturn = { _ in throw BConnectedEnrollmentError.unavailable }
+        do { try await coordinator.verifyPublishedAccount(); XCTFail() } catch {}
+        XCTAssertEqual(reader.steps, [.identity]); XCTAssertEqual(store.bytes, original)
+        reader.steps = []; reader.beforeReturn = { _ in store.failAcceptanceValidation = true }
+        do { try await coordinator.verifyPublishedAccount(); XCTFail() } catch {}
+        XCTAssertEqual(reader.steps, [.identity]); XCTAssertEqual(store.bytes, original)
+        store.failAcceptanceValidation = false; reader.steps = []; reader.beforeReturn = nil
+        try await coordinator.verifyPublishedAccount()
+        XCTAssertEqual(reader.steps, [.identity, .profile]); XCTAssertEqual(store.bytes, original)
+    }
+
+    private func acceptanceResponse(_ step: BConnectedAccountAcceptanceStep, record: BConnectedEnrollmentRecord) throws -> [String: Any] {
+        let account = record.installedAccount!
+        if step == .identity {
+            return ["uuid": account.aci, "pni": account.pni, "number": account.number, "storageCapable": false,
+                    "entitlements": ["badges": [Any]()], "usernameHash": NSNull(), "usernameLinkHandle": NSNull(), "authCredentialSalt": NSNull()]
+        }
+        let original = try BConnectedEnrollmentWire.object(record.registrationRequest)
+        let attrs = original["accountAttributes"] as! [String: Any]
+        let uak = try BConnectedEnrollmentWire.base64(attrs["unidentifiedAccessKey"])
+        var response: [String: Any] = ["uuid": account.aci, "identityKey": original["aciIdentityKey"]!,
+            "unidentifiedAccess": Data(HMAC<SHA256>.authenticationCode(for: Data(repeating: 0, count: 32), using: SymmetricKey(data: uak))).base64EncodedString(),
+            "unrestrictedUnidentifiedAccess": false, "capabilities": ["attachmentBackfill": false, "spqr": true, "profiles_v2": false, "usernameChangeSyncMessage": false],
+            "badges": [Any](), "avatar": NSNull(), "paymentAddress": NSNull()]
+        let profile = try BConnectedEnrollmentWire.object(record.publication!.encryptedProfile)
+        for key in ["name", "about", "aboutEmoji", "phoneNumberSharing"] { response[key] = profile[key] ?? NSNull() }
+        return response
+    }
+
+    @MainActor
+    private func acceptanceRecordBytes() async throws -> Data {
+        let (store, _, _, _, _) = try await acceptanceFixture()
+        return try XCTUnwrap(store.bytes)
+    }
+
+    func testAccountAcceptanceExactOwnedGetRoutesCredentialsAndStrictResponses() async throws {
+        let record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await acceptanceRecordBytes())
+        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let http = PublicationHTTP()
+        let client = BConnectedAccountAcceptanceClient(http: http)
+        for step in BConnectedAccountAcceptanceStep.allCases {
+            let good = try acceptanceResponse(step, record: record)
+            http.result = (try BConnectedEnrollmentWire.encode(good), 200)
+            try await client.read(step, record: record, configuration: configuration)
+            let request = http.lastRequest!
+            XCTAssertEqual(request.httpMethod, "GET"); XCTAssertNil(request.httpBody)
+            XCTAssertEqual(request.url?.host, "publication.example.invalid"); XCTAssertEqual(request.url?.port, 8443)
+            XCTAssertNil(request.url?.query)
+            let profile = try BConnectedEnrollmentWire.object(record.publication!.encryptedProfile)
+            XCTAssertEqual(request.url?.path, step == .identity ? "/v1/accounts/whoami" : "/v1/profile/\(record.installedAccount!.aci)/\(profile["version"]!)")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Basic " + Data((record.installedAccount!.aci + ":" + record.password).utf8).base64EncodedString())
+            var changes: [(String, Any?)] = [("uuid", memberId), ("uuid", nil), ("unknown", true)]
+            if step == .identity { changes += [("number", "+13055550000"), ("pni", memberId), ("storageCapable", 0), ("storageCapable", true), ("usernameHash", "changed"), ("usernameLinkHandle", memberId), ("authCredentialSalt", "changed"), ("entitlements", false)] }
+            else { changes += [("identityKey", try record.pni.publicFields(prefix: "pni")["pniIdentityKey"]!), ("unidentifiedAccess", Data(repeating: 0, count: 32).base64EncodedString()), ("unrestrictedUnidentifiedAccess", true), ("phoneNumberSharing", Data(repeating: 2, count: 29).base64EncodedString()), ("phoneNumberSharing", nil), ("name", "wrong"), ("avatar", "untrusted/avatar"), ("paymentAddress", "changed"), ("badges", ["unexpected"]), ("capabilities", ["spqr": true]), ("capabilities", ["attachmentBackfill": false, "spqr": true, "profiles_v2": 0, "usernameChangeSyncMessage": false])] }
+            for (field, value) in changes {
+                var bad = good; bad[field] = value
+                http.result = (try BConnectedEnrollmentWire.encode(bad), 200)
+                do { try await client.read(step, record: record, configuration: configuration); XCTFail("accepted \(field)") } catch {}
+            }
+            for status in [204, 304, 401, 404, 500] {
+                http.result = (try BConnectedEnrollmentWire.encode(good), status)
+                do { try await client.read(step, record: record, configuration: configuration); XCTFail() } catch {}
+            }
+            for data in [Data("{\"uuid\":\"a\",\"u\\u0075id\":\"b\"}".utf8), Data(repeating: 32, count: 65_537), Data([0xff]), Data("[]".utf8)] {
+                http.result = (data, 200)
+                do { try await client.read(step, record: record, configuration: configuration); XCTFail() } catch {}
+            }
+        }
+    }
+
+    func testAccountAcceptanceTransportRequiresJSONAndDoesNotRequireEnrollmentCacheHeader() async throws {
+        EnrollmentURLProtocol.status = 200; EnrollmentURLProtocol.noStore = false; EnrollmentURLProtocol.redirect = false
+        EnrollmentURLProtocol.responseBody = Data("{}".utf8)
+        let http = BConnectedOwnedHTTP(protocolClasses: [EnrollmentURLProtocol.self], responseMode: .accountJSON)
+        let request = URLRequest(url: URL(string: "https://publication.example.invalid/v1/accounts/whoami")!)
+        defer { EnrollmentURLProtocol.noStore = true; EnrollmentURLProtocol.contentType = "application/json" }
+        _ = try await http.send(request)
+        for type in ["text/html", "application/octet-stream"] {
+            EnrollmentURLProtocol.contentType = type
+            do { _ = try await http.send(request); XCTFail() } catch {}
+        }
+    }
+
+    func testActualJavaAccountAndProfileSerializationMatchesPublicWireInputs() throws {
+        let fixture = try BConnectedEnrollmentWire.object(resource("bconnected-account-acceptance-v1"))
+        let input = try XCTUnwrap(fixture["input"] as? [String: Any])
+        let account = BConnectedEnrollmentObservation.Account(aci: try BConnectedEnrollmentWire.uuid(input["aci"]),
+            pni: try BConnectedEnrollmentWire.uuid(input["pni"]), number: try BConnectedEnrollmentWire.text(input["number"]), deviceId: 1)
+        let attributes = try BConnectedEnrollmentWire.encode(XCTUnwrap(input["accountAttributes"] as? [String: Any]))
+        let profile = try BConnectedEnrollmentWire.encode(XCTUnwrap(input["encryptedProfile"] as? [String: Any]))
+        let identity = try BConnectedEnrollmentWire.base64(input["aciIdentityKey"])
+        for (step, field) in [(BConnectedAccountAcceptanceStep.identity, "whoamiBase64"), (.profile, "profileBase64")] {
+            try BConnectedAccountAcceptanceClient.validateResponse(BConnectedEnrollmentWire.base64(fixture[field]), status: 200,
+                step: step, account: account, attributes: attributes, profile: profile, identityKey: identity)
+        }
     }
 
     @MainActor
@@ -853,6 +1020,15 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
 }
 
 private final class MemoryStore: BConnectedEnrollmentPersistence {
+    var failAcceptanceValidation = false
+    func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord {
+        if failAcceptanceValidation { throw BConnectedEnrollmentError.persistenceUnavailable }
+        return try transaction { value in
+            guard let value else { throw BConnectedEnrollmentError.missingAttempt }
+            try value.validateAccountAcceptance(configuration: configuration, expected: expected)
+            return value
+        }
+    }
     var bytes: Data?
     var failCommit = false
     var supportsNativeInstallation = false
@@ -970,6 +1146,15 @@ private final class PublicationHTTP: BConnectedOwnedHTTPSending {
     var lastRequest: URLRequest?
     func send(_ request: URLRequest) async throws -> (Data, Int) { lastRequest = request; return result }
 }
+
+private final class AcceptanceReader: BConnectedAccountAcceptanceReading {
+    var steps: [BConnectedAccountAcceptanceStep] = []
+    var beforeReturn: ((BConnectedAccountAcceptanceStep) throws -> Void)?
+    func read(_ step: BConnectedAccountAcceptanceStep, record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration) async throws {
+        steps.append(step)
+        try beforeReturn?(step)
+    }
+}
 private final class Sender: BConnectedEnrollmentSending {
     var calls: [BConnectedEnrollmentOperation] = []
     var error: Error?
@@ -990,11 +1175,12 @@ private final class EnrollmentURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var noStore = true
     nonisolated(unsafe) static var redirect = false
     nonisolated(unsafe) static var calls = 0
+    nonisolated(unsafe) static var contentType = "application/json"
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.calls += 1
-        var headers = ["Content-Type": "application/json"]
+        var headers = ["Content-Type": Self.contentType]
         if Self.noStore { headers["Cache-Control"] = "no-store" }
         if Self.redirect {
             let response = HTTPURLResponse(url: request.url!, statusCode: 302, httpVersion: nil,

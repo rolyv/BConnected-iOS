@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0A03000000000000000001 /* bconnected-account-acceptance-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */; };
 		BC0E04000000000000000005 /* BConnectedCommunityEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */; };
 		BC0E04000000000000000003 /* BConnectedCommunityEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */; };
 		BC0E04000000000000000001 /* BConnectedOwnedHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */; };
@@ -4295,6 +4296,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/bconnected-account-acceptance-v1.json"; sourceTree = "<group>"; };
 		BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollmentStore.swift; sourceTree = "<group>"; };
 		BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollment.swift; sourceTree = "<group>"; };
 		BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedOwnedHTTP.swift; sourceTree = "<group>"; };
@@ -10388,6 +10390,7 @@
 				BC0E02000000000000000004 /* mobile-enrollment-v1.json */,
 				BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */,
 				BC0E02000000000000000008 /* mobile-enrollment-v1-responses.json */,
+				BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */,
 				BC0C01000000000000000004 /* BConnectedRegistrationKeyCommitmentTest.swift */,
 				BC0C01000000000000000006 /* registration-key-commitment-v1.json */,
 			);
@@ -16731,6 +16734,7 @@
 				BC0E02000000000000000003 /* mobile-enrollment-v1.json in Resources */,
 				BC0E02000000000000000005 /* mobile-enrollment-v1-invalid.json in Resources */,
 				BC0E02000000000000000007 /* mobile-enrollment-v1-responses.json in Resources */,
+				BC0A03000000000000000001 /* bconnected-account-acceptance-v1.json in Resources */,
 				BC0C01000000000000000005 /* registration-key-commitment-v1.json in Resources */,
 				D90AA5F52CC9616B00021CB0 /* account_data_00.binproto in Resources */,
 				D90AA3B62CC9616B00021CB0 /* account_data_00.txtproto in Resources */,

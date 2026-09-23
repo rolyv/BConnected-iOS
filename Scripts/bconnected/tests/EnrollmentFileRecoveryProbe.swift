@@ -313,6 +313,65 @@ case "verify-no-prekeys", "verify-prekeys", "verify-prekeys-dispatched", "verify
         hidden(tx)
     }
     print("PASS \(mode) fresh process: exact native keys, operation, endpoint and public bytes preserved with zero writes; only owned unacknowledged replay permitted")
+case "acceptance-validation":
+    try write { tx in
+        let before = try Int.fetchOne(tx.database, sql: "SELECT total_changes()")!
+        let saved = enrollment.getData("attempt", transaction: tx)!
+        let expected = try readRecord(tx)
+        for _ in 0..<2 {
+            _ = try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: publicationConfiguration, expected: expected, tx: tx) {
+                try preparePreKeys(tx)
+            }
+        }
+        var changed = expected; changed.sendNeedsExplicitDecision.toggle()
+        do {
+            _ = try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: publicationConfiguration, expected: changed, tx: tx) {
+                preconditionFailure("stale context entered native validation")
+            }
+            preconditionFailure("stale acceptance snapshot accepted")
+        } catch BConnectedEnrollmentError.immutableConflict {}
+        precondition(enrollment.getData("attempt", transaction: tx) == saved)
+        try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
+        hidden(tx)
+    }
+    // Each injected conflict is rolled back, then the original file is revalidated again.
+    enum AcceptanceRollback: Error { case expected }
+    for conflict in 0..<5 {
+        do {
+            try write { tx in
+                var record = try readRecord(tx)
+                switch conflict {
+                case 0: record.preKeyPublication!.pni.state = .dispatched
+                case 1:
+                    let keys = record.preKeyPublication!
+                    record.preKeyPublication = .init(version: 1, route: nil, contextHash: try record.preKeyContextHash(), aci: keys.aci, pni: keys.pni)
+                case 2: record.preKeyPublication = nil
+                case 3:
+                    let key = try LibSignalClient.PreKeyRecord(bytes: record.preKeyPublication!.aci.ec[0])
+                    preKeys.aciStore.removePreKey(in: .oneTime, keyId: key.id, tx: tx)
+                default:
+                    try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = 'Changed' WHERE uniqueId = ?", arguments: [record.localSetupReceipt!.profileUniqueId])
+                }
+                enrollment.setData(try JSONEncoder().encode(record), key: "attempt", transaction: tx)
+                let before = try Int.fetchOne(tx.database, sql: "SELECT total_changes()")!
+                do {
+                    _ = try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: publicationConfiguration, expected: nil, tx: tx) {
+                        precondition(conflict >= 3, "incomplete acceptance reached native preparation")
+                        return try preparePreKeys(tx)
+                    }
+                    preconditionFailure("changed native prerequisites accepted")
+                } catch is BConnectedEnrollmentError {}
+                try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
+                hidden(tx)
+                throw AcceptanceRollback.expected
+            }
+        } catch AcceptanceRollback.expected {}
+        try write { tx in
+            _ = try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: publicationConfiguration, expected: nil, tx: tx) { try preparePreKeys(tx) }
+            hidden(tx)
+        }
+    }
+    print("PASS account acceptance revalidation: exact read-only native context; five rollback-isolated incomplete/legacy/key/profile conflicts; readiness remains hidden")
 case "prekeys-conflicts":
     enum ProbeRollback: Error { case expected }
     for kind in 0..<12 {

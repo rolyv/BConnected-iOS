@@ -229,6 +229,21 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
         return Data(SHA256.hash(data: try BConnectedEnrollmentWire.base64(BConnectedEnrollmentWire.text(attributes["unidentifiedAccessKey"]))))
     }
 
+    /// This gate checks saved prerequisites, never freshness or permission to use messaging.
+    func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: Self? = nil) throws {
+        try validate()
+        guard let account = installedAccount, observation?.state == .active, observation?.registrationAuthorized == true,
+              observation?.account == account, publication?.complete == true,
+              publication?.configurationHash == configuration.hash,
+              let keys = preKeyPublication, keys.complete, keys.version == 2,
+              keys.route?.origin == configuration.origin.absoluteString,
+              keys.route?.configurationHash == configuration.hash else { throw BConnectedEnrollmentError.immutableConflict }
+        if let expected {
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            guard try encoder.encode(self) == encoder.encode(expected) else { throw BConnectedEnrollmentError.immutableConflict }
+        }
+    }
+
     struct Binding: Codable, Equatable { let memberId: String; let challenge: String }
     var description: String { "BConnectedEnrollmentRecord(redacted)" }
     var debugDescription: String { description }
@@ -358,12 +373,15 @@ protocol BConnectedEnrollmentPersistence {
     func transitionPreKeys(expected: BConnectedEnrollmentRecord, identity: BConnectedPreKeyIdentity, acknowledge: Bool) throws -> BConnectedEnrollmentRecord
     func preparePublication(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord
     func transitionPublication(expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, acknowledge: Bool) throws -> BConnectedEnrollmentRecord
+    /// Rechecks completed saved and native state without preparing, replacing or acknowledging it.
+    func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord
     /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws
 }
 
 extension BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { false }
+    func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func preparePreKeys(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func transitionPreKeys(expected: BConnectedEnrollmentRecord, identity: BConnectedPreKeyIdentity, acknowledge: Bool) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func prepareLocalAccount() throws { throw BConnectedEnrollmentError.unavailable }
@@ -383,14 +401,18 @@ public final class BConnectedEnrollmentCoordinator {
     private let publicationConfiguration: BConnectedPublicationConfiguration?
     private let publisher: (any BConnectedPublicationSending)?
     private let preKeyPublisher: (any BConnectedPreKeySending)?
+    private let acceptanceReader: (any BConnectedAccountAcceptanceReading)?
     private var inFlight = false
     public var supportsPreKeyPublication: Bool { publicationConfiguration != nil && preKeyPublisher != nil && persistence.supportsNativeInstallation }
     public var supportsAccountPublication: Bool { publicationConfiguration != nil && publisher != nil && persistence.supportsNativeInstallation }
+    public var supportsAccountAcceptance: Bool { publicationConfiguration != nil && acceptanceReader != nil && persistence.supportsNativeInstallation }
 
     init(persistence: any BConnectedEnrollmentPersistence, client: any BConnectedEnrollmentSending,
-         publicationConfiguration: BConnectedPublicationConfiguration? = nil, publisher: (any BConnectedPublicationSending)? = nil, preKeyPublisher: (any BConnectedPreKeySending)? = nil) {
+         publicationConfiguration: BConnectedPublicationConfiguration? = nil, publisher: (any BConnectedPublicationSending)? = nil, preKeyPublisher: (any BConnectedPreKeySending)? = nil,
+         acceptanceReader: (any BConnectedAccountAcceptanceReading)? = nil) {
         self.persistence = persistence; self.client = client
         self.publicationConfiguration = publicationConfiguration; self.publisher = publisher; self.preKeyPublisher = preKeyPublisher
+        self.acceptanceReader = acceptanceReader
     }
 
     /// First call commits secrets and public request; subsequent calls reuse them, including original metadata.
@@ -501,6 +523,32 @@ public final class BConnectedEnrollmentCoordinator {
             record = try persistence.transitionPreKeys(expected: record, identity: identity, acknowledge: true)
         }
         // These acknowledgements never publish registration or release pending-services.
+    }
+
+    /// Explicit readback after the owned initial-key journal completes. There is no durable
+    /// acceptance flag: every invocation fetches status and both fresh authenticated responses.
+    /// The server must guard each read independently; these observations confer no future grant.
+    public func verifyPublishedAccount() async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard let configuration = publicationConfiguration, let acceptanceReader,
+              persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        try Task.checkCancellation()
+        // Incomplete/legacy journals must fail before any request or potential preparation.
+        var beforeStatus = try persistence.validateAccountAcceptance(configuration: configuration, expected: nil)
+        let status = try await performUnlocked(.status, code: nil, explicitlyResendAfterUncertainOutcome: false)
+        guard status.state == .active, status.registrationAuthorized else { throw BConnectedEnrollmentError.immutableConflict }
+        beforeStatus.observation = status
+        let original = try persistence.validateAccountAcceptance(configuration: configuration, expected: beforeStatus)
+        guard status.account == original.installedAccount else { throw BConnectedEnrollmentError.immutableConflict }
+        for step in BConnectedAccountAcceptanceStep.allCases {
+            try Task.checkCancellation()
+            _ = try persistence.validateAccountAcceptance(configuration: configuration, expected: original)
+            try await acceptanceReader.read(step, record: original, configuration: configuration)
+            try Task.checkCancellation()
+            _ = try persistence.validateAccountAcceptance(configuration: configuration, expected: original)
+        }
+        // No registration state, credentials, callbacks, keys or service readiness are changed.
     }
 
     /// A persisted active observation is not authorization to install. Always fetch fresh status.

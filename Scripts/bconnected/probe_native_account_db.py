@@ -98,7 +98,7 @@ def main():
                   "profile-acknowledge", "prekeys-crash", "verify-no-prekeys", "prekeys-commit-crash", "verify-prekeys",
                   "prekeys-dispatch-crash", "verify-prekeys", "prekeys-dispatch-commit-crash", "verify-prekeys-dispatched",
                   "prekeys-ack-crash", "verify-prekeys-dispatched", "prekeys-ack-commit-crash", "verify-prekeys-aci-ack",
-                  "prekeys-finish", "verify-prekeys-complete", "prekeys-conflicts", "prekeys-legacy"]
+                  "prekeys-finish", "verify-prekeys-complete", "acceptance-validation", "prekeys-conflicts", "prekeys-legacy"]
         if args.probe == "group-manifest":
             phases = ["initialize", "remember-crash", "verify-absent", "remember-commit-crash", "verify-saved",
                       "advance-crash", "verify-saved", "advance-commit-crash", "verify-advanced"]
