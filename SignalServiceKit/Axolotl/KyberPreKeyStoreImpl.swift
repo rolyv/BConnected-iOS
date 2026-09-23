@@ -34,6 +34,10 @@ public class KyberPreKeyStoreImpl {
         self.preKeyStore = preKeyStore
     }
 
+    func bconnectedLastAllocatedId(tx: DBReadTransaction) -> UInt32? {
+        metadataStore.getInt(Constants.lastKeyId, transaction: tx).flatMap(UInt32.init(exactly:))
+    }
+
     func allocatePreKeyIds(count: Int, tx: DBWriteTransaction) -> ClosedRange<UInt32> {
         return preKeyStore.allocatePreKeyIds(in: metadataStore, lastPreKeyIdKey: Constants.lastKeyId, count: count, tx: tx)
     }

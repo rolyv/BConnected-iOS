@@ -83,6 +83,18 @@ func publication(_ tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord 
         accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), sharePhoneNumber: false, validateNative: validate)
 }
 
+func preparePreKeys(_ tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
+    try BConnectedPreKeySetup.prepare(record: publication(tx), preKeyStore: preKeys, tx: tx)
+}
+func counters(_ tx: DBReadTransaction) throws -> Data {
+    var values: [String: Any] = [:]
+    for (name, identity) in [("aci", OWSIdentity.aci), ("pni", .pni)] {
+        values[name + "EC"] = PreKeyStoreImpl(for: identity, preKeyStore: preKeys).bconnectedLastAllocatedId(tx: tx) as Any? ?? NSNull()
+        values[name + "PQ"] = KyberPreKeyStoreImpl(for: identity, dateProvider: { Date() }, preKeyStore: preKeys).bconnectedLastAllocatedId(tx: tx) as Any? ?? NSNull()
+    }
+    return try BConnectedEnrollmentWire.encode(values)
+}
+
 switch mode {
 case "initialize":
     let profileKey = Aes256Key.generateRandom()
@@ -227,5 +239,116 @@ case "verify-unpublished", "verify-prepared", "verify-dispatched", "verify-attri
         }
     }
     print("PASS \(mode) fresh process preserves frozen publication bytes, expected dispatch/ack state, native material and readiness barrier")
+case "profile-acknowledge":
+    try write { tx in
+        var record = try publication(tx)
+        record = try BConnectedLocalAccountSetup.transitionPublication(record: record, expected: record, step: .profile, acknowledge: false, tx: tx)
+        _ = try BConnectedLocalAccountSetup.transitionPublication(record: record, expected: record, step: .profile, acknowledge: true, tx: tx)
+        evidence.setData(try counters(tx), key: "original-counters", transaction: tx)
+        hidden(tx)
+    }
+    print("PASS synthetic profile acknowledgement permits next pending key step only")
+case "prekeys-crash", "prekeys-commit-crash":
+    try write { tx in
+        let prepared = try preparePreKeys(tx).preKeyPublication!
+        evidence.setData(try JSONEncoder().encode(prepared), key: "frozen-prekeys", transaction: tx)
+        hidden(tx)
+        if mode == "prekeys-crash" { crash() }
+    }
+    crash()
+case "prekeys-dispatch-crash", "prekeys-dispatch-commit-crash", "prekeys-ack-crash", "prekeys-ack-commit-crash":
+    try write { tx in
+        let record = try preparePreKeys(tx)
+        _ = try BConnectedPreKeySetup.transition(record: record, expected: record, identity: .aci,
+            acknowledge: mode.hasPrefix("prekeys-ack"), preKeyStore: preKeys, tx: tx)
+        hidden(tx)
+        if !mode.contains("commit") { crash() }
+    }
+    crash()
+case "prekeys-finish":
+    try write { tx in
+        var record = try preparePreKeys(tx)
+        record = try BConnectedPreKeySetup.transition(record: record, expected: record, identity: .pni, acknowledge: false, preKeyStore: preKeys, tx: tx)
+        _ = try BConnectedPreKeySetup.transition(record: record, expected: record, identity: .pni, acknowledge: true, preKeyStore: preKeys, tx: tx)
+        hidden(tx)
+    }
+    print("PASS synthetic PNI acknowledgement completes key journal while credentials/readiness remain hidden")
+case "verify-no-prekeys", "verify-prekeys", "verify-prekeys-dispatched", "verify-prekeys-aci-ack", "verify-prekeys-complete":
+    try write { tx in
+        let before = try Int.fetchOne(tx.database, sql: "SELECT total_changes()")!
+        let originalBytes = enrollment.getData("attempt", transaction: tx)
+        let record = try publication(tx)
+        if mode == "verify-no-prekeys" {
+            precondition(record.preKeyPublication == nil && evidence.getData("frozen-prekeys", transaction: tx) == nil)
+            try BConnectedPreKeySetup.validateNative(record, preKeyStore: preKeys, tx: tx)
+            try check(counters(tx) == evidence.getData("original-counters", transaction: tx))
+        } else {
+            let current = try preparePreKeys(tx)
+            let ledger = current.preKeyPublication!
+            let original = try JSONDecoder().decode(BConnectedEnrollmentRecord.PreKeyPublication.self, from: evidence.getData("frozen-prekeys", transaction: tx)!)
+            precondition(ledger.contextHash == original.contextHash)
+            for identity in [BConnectedPreKeyIdentity.aci, .pni] {
+                let now = ledger.batch(identity), saved = original.batch(identity)
+                precondition(now.request == saved.request && now.ec == saved.ec && now.pq == saved.pq)
+            }
+            let expected: BConnectedEnrollmentRecord.Publication.State = mode == "verify-prekeys" ? .prepared : mode == "verify-prekeys-dispatched" ? .dispatched : .acknowledged
+            precondition(ledger.aci.state == expected)
+            precondition(ledger.pni.state == (mode == "verify-prekeys-complete" ? .acknowledged : .prepared))
+            // An uncertain dispatch has no transition back to prepared and cannot dispatch twice.
+            if ledger.aci.state != .prepared {
+                do {
+                    _ = try BConnectedPreKeySetup.transition(record: current, expected: current, identity: .aci, acknowledge: false, preKeyStore: preKeys, tx: tx)
+                    preconditionFailure("repeat key dispatch accepted")
+                } catch BConnectedEnrollmentError.immutableConflict {}
+            }
+        }
+        precondition(enrollment.getData("attempt", transaction: tx) == originalBytes)
+        try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
+        hidden(tx)
+    }
+    print("PASS \(mode) fresh process: exact native private keys/public request bytes, counters and journal preserved with zero writes; no dispatch replay")
+case "prekeys-conflicts":
+    enum ProbeRollback: Error { case expected }
+    for kind in 0..<9 {
+        let beforeBytes = try database.read { enrollment.getData("attempt", transaction: DBReadTransaction(database: $0)) }
+        do {
+            try write { tx in
+                var record = try readRecord(tx)
+                let first = try LibSignalClient.PreKeyRecord(bytes: record.preKeyPublication!.aci.ec[0])
+                switch kind {
+                case 0: preKeys.aciStore.removePreKey(in: .oneTime, keyId: first.id, tx: tx)
+                case 1: preKeys.aciStore.upsertPreKeyRecord(Data([1]), keyId: first.id, in: .oneTime, isOneTime: true, tx: tx)
+                case 2:
+                    let key = try LibSignalClient.KyberPreKeyRecord(bytes: record.preKeyPublication!.pni.pq[0])
+                    preKeys.pniStore.upsertPreKeyRecord(key.serialize(), keyId: key.id, in: .kyber, isOneTime: false, tx: tx)
+                case 3: preKeys.aciStore.upsertPreKeyRecord(Data([1]), keyId: UInt32.max, in: .oneTime, isOneTime: true, tx: tx)
+                case 4: _ = PreKeyStoreImpl(for: .aci, preKeyStore: preKeys).allocatePreKeyIds(tx: tx)
+                case 5:
+                    record.binding = .init(memberId: "00000000-0000-4000-8000-000000000002", challenge: record.binding!.challenge)
+                    enrollment.setData(try JSONEncoder().encode(record), key: "attempt", transaction: tx)
+                case 6: break
+                case 7:
+                    record.observation = .init(operationId: record.operationId!, state: .suspended, registrationAuthorized: false,
+                        phoneVerified: true, nextSmsSeconds: nil, nextCheckSeconds: nil, expiresInSeconds: nil, account: record.installedAccount)
+                    enrollment.setData(try JSONEncoder().encode(record), key: "attempt", transaction: tx)
+                default: try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = 'Changed'")
+                }
+                do {
+                    if kind == 6 {
+                        _ = try BConnectedLocalAccountSetup.preparePublication(tx: tx,
+                            configuration: BConnectedPublicationConfiguration(origin: publicationConfiguration.origin, authorityCommitment: Data(repeating: 2, count: 32)),
+                            accountKeyStore: AccountKeyStore(backupSettingsStore: .init()), sharePhoneNumber: false, validateNative: validate)
+                    } else { _ = try preparePreKeys(tx) }
+                    preconditionFailure("changed native/context prerequisite accepted")
+                } catch is BConnectedEnrollmentError {}
+                throw ProbeRollback.expected
+            }
+        } catch ProbeRollback.expected {}
+        try write { tx in
+            precondition(enrollment.getData("attempt", transaction: tx) == beforeBytes)
+            _ = try preparePreKeys(tx); hidden(tx)
+        }
+    }
+    print("PASS nine rollback-isolated consumed/changed/foreign key, counter, binding, authority, suspension and profile conflicts rejected; original state remains intact")
 default: preconditionFailure("unknown probe mode")
 }

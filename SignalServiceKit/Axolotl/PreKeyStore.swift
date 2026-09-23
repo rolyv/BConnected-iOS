@@ -108,6 +108,10 @@ class PreKeyStoreForIdentity {
         }
     }
 
+    func bconnectedKeyRecords(tx: DBReadTransaction) throws -> [PreKeyRecord] {
+        try PreKeyRecord.filter(Column(PreKeyRecord.CodingKeys.identity.rawValue) == identity.rawValue).fetchAll(tx.database)
+    }
+
     func bconnectedHasAnyKeys(tx: DBReadTransaction) -> Bool {
         failIfThrows {
             try PreKeyRecord.filter(Column(PreKeyRecord.CodingKeys.identity.rawValue) == identity.rawValue).fetchCount(tx.database) != 0

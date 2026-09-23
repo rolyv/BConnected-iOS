@@ -19,6 +19,16 @@ public struct BConnectedNativeAccountInstaller {
         self.protocolStores = protocolStores
     }
 
+    func preparePreKeys(record: BConnectedEnrollmentRecord, tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
+        try BConnectedPreKeySetup.prepare(record: record, preKeyStore: protocolStores.preKeyStore, tx: tx)
+    }
+
+    func transitionPreKeys(record: BConnectedEnrollmentRecord, expected: BConnectedEnrollmentRecord,
+                           identity: BConnectedPreKeyIdentity, acknowledge: Bool, tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
+        try BConnectedPreKeySetup.transition(record: record, expected: expected, identity: identity,
+            acknowledge: acknowledge, preKeyStore: protocolStores.preKeyStore, tx: tx)
+    }
+
     /// All parsing and validation precede the returned nonthrowing mutation closure. Callers must
     /// serialize the final enrollment receipt first and run both writes in the same SQLCipher tx.
     func prepare(record: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account,

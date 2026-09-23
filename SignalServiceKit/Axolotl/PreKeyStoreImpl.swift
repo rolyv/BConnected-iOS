@@ -24,6 +24,10 @@ public class PreKeyStoreImpl {
         self.preKeyStore = preKeyStore
     }
 
+    func bconnectedLastAllocatedId(tx: DBReadTransaction) -> UInt32? {
+        metadataStore.getInt("TSStorageInternalSettingsNextPreKeyId", transaction: tx).flatMap(UInt32.init(exactly:))
+    }
+
     func allocatePreKeyIds(tx: DBWriteTransaction) -> ClosedRange<UInt32> {
         return preKeyStore.allocatePreKeyIds(
             in: metadataStore,

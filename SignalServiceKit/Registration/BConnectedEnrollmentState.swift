@@ -41,6 +41,8 @@ public struct BConnectedEnrollmentProgress {
     public let accountEntropyPrepared: Bool
     public let accountPublicationComplete: Bool
     public let accountPublicationNeedsExplicitRetry: Bool
+    public let preKeyPublicationComplete: Bool
+    public let preKeyPublicationUncertain: Bool
 }
 
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
@@ -93,6 +95,7 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     var localSetupReceipt: LocalSetupReceipt?
     var accountEntropyReceipt: AccountEntropyReceipt?
     var publication: Publication?
+    var preKeyPublication: PreKeyPublication?
 
     struct Publication: Codable, Equatable {
         enum State: String, Codable { case prepared, dispatched, acknowledged }
@@ -111,6 +114,62 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
         static func hash(attributes: Data, profile: Data) -> Data {
             Data(SHA256.hash(data: Data(SHA256.hash(data: attributes)) + Data(SHA256.hash(data: profile))))
         }
+    }
+
+    struct PreKeyPublication: Codable, Equatable {
+        struct Batch: Codable, Equatable {
+            let ec: [Data]
+            let pq: [Data]
+            let request: Data
+            var state: Publication.State = .prepared
+
+            static func request(ec: [Data], pq: [Data], identity: Identity) throws -> Data {
+                guard ec.count == 100, pq.count == 100 else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                let pair = try IdentityKeyPair(bytes: identity.pair)
+                let lastResort = try LibSignalClient.KyberPreKeyRecord(bytes: identity.lastResortPreKey)
+                let ecKeys = try ec.map { try LibSignalClient.PreKeyRecord(bytes: $0) }
+                let pqKeys = try pq.map { try LibSignalClient.KyberPreKeyRecord(bytes: $0) }
+                guard Set(ecKeys.map(\.id)).count == 100, Set(pqKeys.map(\.id)).count == 100,
+                      !pqKeys.contains(where: { $0.id == lastResort.id }) else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                let ecFields: [[String: Any]] = try zip(ecKeys, ec).map { key, bytes in
+                    guard key.id > 0, key.id < 0x1000000, key.serialize() == bytes,
+                          try key.privateKey().publicKey.serialize() == key.publicKey().serialize() else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                    return ["keyId": key.id, "publicKey": try key.publicKey().serialize().base64EncodedString()]
+                }
+                let pqFields: [[String: Any]] = try zip(pqKeys, pq).map { key, bytes in
+                    guard key.id > 0, key.id < 0x1000000, key.serialize() == bytes,
+                          try pair.publicKey.verifySignature(message: key.publicKey().serialize(), signature: key.signature) else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                    return ["keyId": key.id, "publicKey": try key.publicKey().serialize().base64EncodedString(), "signature": key.signature.base64EncodedString()]
+                }
+                // Native PQ public keys make a 100-key batch larger than enrollment's 64 KiB
+                // envelope. Keep that limit unchanged and bound this exact public-only schema.
+                let bytes = try JSONSerialization.data(withJSONObject: ["preKeys": ecFields, "pqPreKeys": pqFields], options: [.sortedKeys, .withoutEscapingSlashes])
+                guard bytes.count <= 524_288 else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                return bytes
+            }
+        }
+        let version: Int
+        let contextHash: Data
+        var aci: Batch
+        var pni: Batch
+        var complete: Bool { aci.state == .acknowledged && pni.state == .acknowledged }
+        var uncertain: Bool { aci.state == .dispatched || pni.state == .dispatched }
+        func batch(_ identity: BConnectedPreKeyIdentity) -> Batch { identity == .aci ? aci : pni }
+    }
+
+    /// Includes the original credential and binding, never a renewed request's authority or identity.
+    func preKeyContextHash() throws -> Data {
+        guard let publication, publication.complete, let binding, let operationId, let installedAccount else {
+            throw BConnectedEnrollmentError.immutableConflict
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        return Data(SHA256.hash(data: try BConnectedEnrollmentWire.encode([
+            "domain": "BConnected pending one-time keys v1", "attempt": attempt, "commitment": keyCommitment,
+            "member": binding.memberId, "challenge": binding.challenge, "operation": operationId,
+            "account": try encoder.encode(installedAccount).base64EncodedString(), "password": password,
+            "signalAgent": originalSignalAgent, "userAgent": originalUserAgent,
+            "publication": try encoder.encode(publication).base64EncodedString(),
+        ])))
     }
 
     struct AccountEntropyReceipt: Codable, Equatable {
@@ -222,6 +281,17 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
                 }
             }
         }
+        try validatePreKeyPublication()
+    }
+
+    func validatePreKeyPublication() throws {
+        guard let keys = preKeyPublication else { return }
+        guard keys.version == 1, keys.contextHash == (try preKeyContextHash()),
+              keys.pni.state == .prepared || keys.aci.state == .acknowledged,
+              keys.aci.request == (try PreKeyPublication.Batch.request(ec: keys.aci.ec, pq: keys.aci.pq, identity: aci)),
+              keys.pni.request == (try PreKeyPublication.Batch.request(ec: keys.pni.ec, pq: keys.pni.pq, identity: pni)) else {
+            throw BConnectedEnrollmentError.persistenceUnavailable
+        }
     }
 
     func body(for operation: BConnectedEnrollmentOperation, code: String?) throws -> Data {
@@ -248,6 +318,8 @@ protocol BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { get }
     func prepareLocalAccount() throws
     func prepareAccountEntropy() throws
+    func preparePreKeys(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord
+    func transitionPreKeys(expected: BConnectedEnrollmentRecord, identity: BConnectedPreKeyIdentity, acknowledge: Bool) throws -> BConnectedEnrollmentRecord
     func preparePublication(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord
     func transitionPublication(expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, acknowledge: Bool) throws -> BConnectedEnrollmentRecord
     /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
@@ -256,6 +328,8 @@ protocol BConnectedEnrollmentPersistence {
 
 extension BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { false }
+    func preparePreKeys(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
+    func transitionPreKeys(expected: BConnectedEnrollmentRecord, identity: BConnectedPreKeyIdentity, acknowledge: Bool) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func prepareLocalAccount() throws { throw BConnectedEnrollmentError.unavailable }
     func prepareAccountEntropy() throws { throw BConnectedEnrollmentError.unavailable }
     func preparePublication(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
@@ -272,13 +346,15 @@ public final class BConnectedEnrollmentCoordinator {
     private let client: any BConnectedEnrollmentSending
     private let publicationConfiguration: BConnectedPublicationConfiguration?
     private let publisher: (any BConnectedPublicationSending)?
+    private let preKeyPublisher: (any BConnectedPreKeySending)?
     private var inFlight = false
+    public var supportsPreKeyPublication: Bool { publicationConfiguration != nil && preKeyPublisher != nil && persistence.supportsNativeInstallation }
     public var supportsAccountPublication: Bool { publicationConfiguration != nil && publisher != nil && persistence.supportsNativeInstallation }
 
     init(persistence: any BConnectedEnrollmentPersistence, client: any BConnectedEnrollmentSending,
-         publicationConfiguration: BConnectedPublicationConfiguration? = nil, publisher: (any BConnectedPublicationSending)? = nil) {
+         publicationConfiguration: BConnectedPublicationConfiguration? = nil, publisher: (any BConnectedPublicationSending)? = nil, preKeyPublisher: (any BConnectedPreKeySending)? = nil) {
         self.persistence = persistence; self.client = client
-        self.publicationConfiguration = publicationConfiguration; self.publisher = publisher
+        self.publicationConfiguration = publicationConfiguration; self.publisher = publisher; self.preKeyPublisher = preKeyPublisher
     }
 
     /// First call commits secrets and public request; subsequent calls reuse them, including original metadata.
@@ -302,7 +378,9 @@ public final class BConnectedEnrollmentCoordinator {
                          nativeAccountInstalled: record.installedAccount != nil, localAccountPrepared: record.localSetupReceipt != nil,
                          accountEntropyPrepared: record.accountEntropyReceipt != nil,
                          accountPublicationComplete: record.publication?.complete == true,
-                         accountPublicationNeedsExplicitRetry: record.publication?.uncertain == true)
+                         accountPublicationNeedsExplicitRetry: record.publication?.uncertain == true,
+                         preKeyPublicationComplete: record.preKeyPublication?.complete == true,
+                         preKeyPublicationUncertain: record.preKeyPublication?.uncertain == true)
         }
     }
 
@@ -363,6 +441,29 @@ public final class BConnectedEnrollmentCoordinator {
             record = try persistence.transitionPublication(expected: record, step: step, acknowledge: true)
         }
         // Publication acknowledgement is not a services-ready capability or registration event.
+    }
+
+    /// The replace-pool server API has no idempotency tombstone. Any uncertain dispatch is
+    /// terminal here: even an explicit retry could restore already-consumed one-time key IDs.
+    public func publishPreKeys() async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard let configuration = publicationConfiguration, let preKeyPublisher,
+              persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        let status = try await performUnlocked(.status, code: nil, explicitlyResendAfterUncertainOutcome: false)
+        guard status.state == .active, status.registrationAuthorized == true else { throw BConnectedEnrollmentError.immutableConflict }
+        var record = try persistence.preparePreKeys(configuration: configuration)
+        guard status.account == record.installedAccount else { throw BConnectedEnrollmentError.immutableConflict }
+        for identity in [BConnectedPreKeyIdentity.aci, .pni] {
+            guard let keys = record.preKeyPublication else { throw BConnectedEnrollmentError.persistenceUnavailable }
+            if keys.batch(identity).state == .acknowledged { continue }
+            guard keys.batch(identity).state == .prepared else { throw BConnectedEnrollmentError.uncertainPreKeyPublication }
+            record = try persistence.transitionPreKeys(expected: record, identity: identity, acknowledge: false)
+            try Task.checkCancellation()
+            try await preKeyPublisher.send(identity, record: record, configuration: configuration)
+            record = try persistence.transitionPreKeys(expected: record, identity: identity, acknowledge: true)
+        }
+        // These acknowledgements never publish registration or release pending-services.
     }
 
     /// A persisted active observation is not authorization to install. Always fetch fresh status.

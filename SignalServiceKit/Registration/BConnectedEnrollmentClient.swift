@@ -59,6 +59,39 @@ final class BConnectedPublicationClient: BConnectedPublicationSending {
     }
 }
 
+enum BConnectedPreKeyIdentity: String { case aci, pni }
+protocol BConnectedPreKeySending {
+    func send(_ identity: BConnectedPreKeyIdentity, record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration) async throws
+}
+
+final class BConnectedPreKeyClient: BConnectedPreKeySending {
+    private let http: any BConnectedOwnedHTTPSending
+    init(http: any BConnectedOwnedHTTPSending = BConnectedOwnedHTTP(responseMode: .emptyPublication)) { self.http = http }
+
+    func request(_ identity: BConnectedPreKeyIdentity, record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration) throws -> URLRequest {
+        try record.validate()
+        guard let account = record.installedAccount, account.deviceId == 1,
+              record.publication?.configurationHash == configuration.hash,
+              let keys = record.preKeyPublication, keys.batch(identity).state == .dispatched else { throw BConnectedEnrollmentError.immutableConflict }
+        var components = URLComponents(url: configuration.origin, resolvingAgainstBaseURL: false)!
+        components.path = "/v2/keys"; components.queryItems = [URLQueryItem(name: "identity", value: identity.rawValue)]
+        var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.httpMethod = "PUT"; request.httpBody = keys.batch(identity).request
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Basic " + Data((account.aci.lowercased() + ":" + record.password).utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        request.setValue(record.originalUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(record.originalSignalAgent, forHTTPHeaderField: "X-Signal-Agent")
+        return request
+    }
+
+    func send(_ identity: BConnectedPreKeyIdentity, record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration) async throws {
+        let (data, status) = try await http.send(request(identity, record: record, configuration: configuration))
+        guard status == 204, data.isEmpty else { throw BConnectedEnrollmentError.invalidResponse }
+    }
+}
+
 protocol BConnectedEnrollmentSending {
     func send(_ operation: BConnectedEnrollmentOperation, record: BConnectedEnrollmentRecord, code: String?) async throws -> BConnectedEnrollmentObservation
 }

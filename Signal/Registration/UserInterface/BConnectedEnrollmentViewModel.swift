@@ -57,6 +57,12 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             && progress?.accountPublicationComplete != true
     }
 
+    var mayPublishPreKeys: Bool {
+        coordinator?.supportsPreKeyPublication == true && memberAllowsVerification && progress?.lastObservation?.state == .active
+            && progress?.accountPublicationComplete == true && progress?.preKeyPublicationComplete != true
+            && progress?.preKeyPublicationUncertain != true
+    }
+
     var title: String {
         guard initialRegistration else { return "Account setup unavailable" }
         if let member = communityProgress?.member, member.status != .approved { return "Alumni approval" }
@@ -88,6 +94,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         if canApply { return "Use your invitation code to apply with your name and graduation year. An administrator must approve your membership before phone verification." }
         guard let progress else { return "Signup will verify your alumni membership and phone number. Invitation and approval setup is not available in this build yet." }
         guard progress.hasApprovedIntentBinding else { return "Your device setup is saved. Alumni approval must be linked before phone verification can begin." }
+        if progress.preKeyPublicationUncertain {
+            return "We could not confirm the saved device setup request. Messaging remains unavailable. Your keys have been kept; contact the alumni administrator before continuing."
+        }
         if progress.smsOutcomeNeedsExplicitDecision {
             return "We could not confirm whether your last SMS request completed. Check status before deciding to send another code. Your device setup is saved."
         }
@@ -101,7 +110,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             ? (progress.localAccountPrepared
                 ? (progress.accountEntropyPrepared
                     ? (progress.accountPublicationComplete
-                        ? "Your saved profile was accepted by the server. Messaging will become available when the remaining services are ready."
+                        ? (progress.preKeyPublicationComplete
+                            ? "Your saved profile and device setup were accepted. Messaging will become available when the remaining services are ready."
+                            : "Your saved profile was accepted. Publish this iPhone's saved device setup to continue.")
                         : "This iPhone's local setup is saved. Publish your saved profile when the service is available to continue.")
                     : "This iPhone's account is saved. Finish local setup to continue.")
                 : "This iPhone's account and keys are saved. Prepare the local account to continue setup.")
@@ -175,6 +186,18 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             defer { busy = false }
             do { try await coordinator.publishAccount(explicitlyRetryUncertainOutcome: explicitRetry) }
             catch { message = "Profile publication could not be confirmed. Your saved account, profile and publication request have been kept. Check status before explicitly retrying." }
+            do { progress = try coordinator.progress() }
+            catch { message = "Saved signup state could not be read. No new attempt will be created." }
+        }
+    }
+
+    func publishPreKeys() {
+        guard !busy, mayPublishPreKeys, let coordinator else { return }
+        busy = true; message = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do { try await coordinator.publishPreKeys() }
+            catch { message = "Device setup could not be confirmed. Your saved keys have been kept. Contact the alumni administrator before continuing." }
             do { progress = try coordinator.progress() }
             catch { message = "Saved signup state could not be read. No new attempt will be created." }
         }

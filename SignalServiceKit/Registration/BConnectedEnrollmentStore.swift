@@ -40,6 +40,22 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
         }
     }
 
+    func preparePreKeys(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord {
+        guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
+        return try db.writeWithRollbackIfThrows { tx in
+            let record = try preparePublication(configuration: configuration, tx: tx)
+            return try nativeInstaller.preparePreKeys(record: record, tx: tx)
+        }
+    }
+
+    func transitionPreKeys(expected: BConnectedEnrollmentRecord, identity: BConnectedPreKeyIdentity, acknowledge: Bool) throws -> BConnectedEnrollmentRecord {
+        guard let nativeInstaller, let configuration = publicationConfiguration else { throw BConnectedEnrollmentError.unavailable }
+        return try db.writeWithRollbackIfThrows { tx in
+            let record = try preparePublication(configuration: configuration, tx: tx)
+            return try nativeInstaller.transitionPreKeys(record: record, expected: expected, identity: identity, acknowledge: acknowledge, tx: tx)
+        }
+    }
+
     func prepareAccountEntropy() throws {
         guard let nativeInstaller, let accountKeyStore else { throw BConnectedEnrollmentError.unavailable }
         try db.writeWithRollbackIfThrows { tx in
@@ -120,7 +136,8 @@ extension BConnectedEnrollmentCoordinator {
                             publicationConfiguration: BConnectedPublicationConfiguration? = nil, udManager: OWSUDManager? = nil) {
         self.init(persistence: BConnectedEnrollmentStore(db: db, nativeInstaller: nativeInstaller, accountKeyStore: accountKeyStore,
                   publicationConfiguration: publicationConfiguration, udManager: udManager), client: BConnectedEnrollmentClient(endpoint: endpoint),
-                  publicationConfiguration: publicationConfiguration, publisher: publicationConfiguration.map { _ in BConnectedPublicationClient() })
+                  publicationConfiguration: publicationConfiguration, publisher: publicationConfiguration.map { _ in BConnectedPublicationClient() },
+                  preKeyPublisher: publicationConfiguration.map { _ in BConnectedPreKeyClient() })
     }
 }
 

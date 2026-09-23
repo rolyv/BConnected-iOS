@@ -78,6 +78,9 @@ struct BConnectedEnrollmentView: View {
                             else { model.publishAccount() }
                         }
                     }
+                    if model.mayPublishPreKeys {
+                        Button("Publish saved device setup") { model.publishPreKeys() }
+                    }
                     if progress.hasOperation { Button("Check status") { model.perform(.status) } }
                 }
                 if model.busy { ProgressView() }

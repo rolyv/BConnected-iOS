@@ -8,7 +8,7 @@ import LibSignalClient
 public enum BConnectedEnrollmentError: Error, Equatable {
     case invalidInput, invalidResponse, persistenceUnavailable, immutableConflict, unavailable
     case missingAttempt, approvalBindingRequired, operationRequired, explicitSendRequired, busy
-    case explicitPublicationRetryRequired
+    case explicitPublicationRetryRequired, uncertainPreKeyPublication
     case rejected(Code, retryAfterSeconds: Int?)
 
     public enum Code: String, Codable {
