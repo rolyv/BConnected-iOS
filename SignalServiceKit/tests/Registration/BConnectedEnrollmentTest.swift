@@ -563,6 +563,63 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testPublicationURLSessionEmpty204And200AcknowledgeBothDurableSteps() async throws {
+        let configuration = try BConnectedPublicationConfiguration(
+            origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let (store, sender, _, _) = try await publicationFixture(configuration: configuration)
+        let publisher = BConnectedPublicationClient(http: BConnectedOwnedHTTP(
+            protocolClasses: [EnrollmentURLProtocol.self], responseMode: .emptyPublication))
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender,
+            publicationConfiguration: configuration, publisher: publisher)
+        EnrollmentURLProtocol.noStore = false
+        EnrollmentURLProtocol.redirect = false
+        EnrollmentURLProtocol.responseBody = Data()
+        EnrollmentURLProtocol.publicationStatusByPath = ["/v1/accounts/attributes/": 204, "/v1/profile": 200]
+        EnrollmentURLProtocol.publicationPaths = []
+        defer {
+            EnrollmentURLProtocol.noStore = true
+            EnrollmentURLProtocol.publicationStatusByPath = nil
+            EnrollmentURLProtocol.publicationPaths = []
+        }
+        try await coordinator.publishAccount()
+        let publication = try XCTUnwrap(store.load()?.publication)
+        XCTAssertEqual(publication.attributesState, .acknowledged)
+        XCTAssertEqual(publication.profileState, .acknowledged)
+        XCTAssertEqual(EnrollmentURLProtocol.publicationPaths,
+                       ["/v1/accounts/attributes/", "/v1/profile"])
+        XCTAssertTrue(try XCTUnwrap(coordinator.progress()).accountPublicationComplete)
+        XCTAssertEqual(sender.calls, [.status])
+    }
+
+    @MainActor
+    func testPublicationURLSessionProfileFailureLeavesAttributesAcknowledgedAndProfileDispatched() async throws {
+        let configuration = try BConnectedPublicationConfiguration(
+            origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let (store, sender, _, _) = try await publicationFixture(configuration: configuration)
+        let publisher = BConnectedPublicationClient(http: BConnectedOwnedHTTP(
+            protocolClasses: [EnrollmentURLProtocol.self], responseMode: .emptyPublication))
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender,
+            publicationConfiguration: configuration, publisher: publisher)
+        EnrollmentURLProtocol.noStore = false
+        EnrollmentURLProtocol.redirect = false
+        EnrollmentURLProtocol.responseBody = Data()
+        EnrollmentURLProtocol.publicationStatusByPath = ["/v1/accounts/attributes/": 204, "/v1/profile": 503]
+        EnrollmentURLProtocol.publicationPaths = []
+        defer {
+            EnrollmentURLProtocol.noStore = true
+            EnrollmentURLProtocol.publicationStatusByPath = nil
+            EnrollmentURLProtocol.publicationPaths = []
+        }
+        do { try await coordinator.publishAccount(); XCTFail("Profile failure must keep the journal") } catch {}
+        let publication = try XCTUnwrap(store.load()?.publication)
+        XCTAssertEqual(publication.attributesState, .acknowledged)
+        XCTAssertEqual(publication.profileState, .dispatched)
+        XCTAssertEqual(EnrollmentURLProtocol.publicationPaths,
+                       ["/v1/accounts/attributes/", "/v1/profile"])
+        XCTAssertFalse(try XCTUnwrap(coordinator.progress()).accountPublicationComplete)
+    }
+
+    @MainActor
     func testAccountEntropyRequiresLocalReceiptAndSendsNothingAcrossRestart() async throws {
         let store = MemoryStore(), sender = Sender()
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender)
@@ -1560,10 +1617,14 @@ private final class EnrollmentURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var redirect = false
     nonisolated(unsafe) static var calls = 0
     nonisolated(unsafe) static var contentType = "application/json"
+    nonisolated(unsafe) static var publicationStatusByPath: [String: Int]?
+    nonisolated(unsafe) static var publicationPaths: [String] = []
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         Self.calls += 1
+        let path = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.percentEncodedPath
+        if Self.publicationStatusByPath != nil { Self.publicationPaths.append(path) }
         var headers = ["Content-Type": Self.contentType]
         if Self.noStore { headers["Cache-Control"] = "no-store" }
         if Self.redirect {
@@ -1574,7 +1635,8 @@ private final class EnrollmentURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocolDidFinishLoading(self)
             return
         }
-        let response = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: headers)!
+        let status = Self.publicationStatusByPath?[path] ?? Self.status
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Self.responseBody)
         client?.urlProtocolDidFinishLoading(self)
