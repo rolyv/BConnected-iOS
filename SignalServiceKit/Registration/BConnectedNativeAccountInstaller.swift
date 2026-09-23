@@ -19,8 +19,8 @@ public struct BConnectedNativeAccountInstaller {
         self.protocolStores = protocolStores
     }
 
-    func preparePreKeys(record: BConnectedEnrollmentRecord, tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
-        try BConnectedPreKeySetup.prepare(record: record, preKeyStore: protocolStores.preKeyStore, tx: tx)
+    func preparePreKeys(record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration, tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
+        try BConnectedPreKeySetup.prepare(record: record, configuration: configuration, preKeyStore: protocolStores.preKeyStore, tx: tx)
     }
 
     func transitionPreKeys(record: BConnectedEnrollmentRecord, expected: BConnectedEnrollmentRecord,

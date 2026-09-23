@@ -75,7 +75,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func testPreKeysUncertainResponseAndFailedAcknowledgementSurviveRestartWithoutReplay() async throws {
+    func testOwnedPreKeysUncertainResponseAndFailedAcknowledgementReplayOriginalOperationAfterRestart() async throws {
         for failAck in [false, true] {
             let (store, sender, publisher, coordinator, configuration) = try await preKeyFixture()
             publisher.fail = !failAck; store.failPreKeyAcknowledgement = failAck
@@ -85,12 +85,77 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
             XCTAssertEqual(publisher.identities, [.aci])
             let reopened = MemoryStore(); reopened.bytes = store.bytes; reopened.supportsNativeInstallation = true
             let nextSender = PreKeySender()
+            nextSender.beforeSend = { identity, record in
+                XCTAssertEqual(record.preKeyPublication?.route, saved.route)
+                XCTAssertEqual(record.preKeyPublication?.batch(identity).request, saved.batch(identity).request)
+                XCTAssertEqual(record.preKeyPublication?.batch(identity).ec, saved.batch(identity).ec)
+                XCTAssertEqual(record.preKeyPublication?.batch(identity).pq, saved.batch(identity).pq)
+            }
             let restarted = BConnectedEnrollmentCoordinator(persistence: reopened, client: sender, publicationConfiguration: configuration, preKeyPublisher: nextSender)
+            XCTAssertTrue(try XCTUnwrap(restarted.progress()).preKeyPublicationUncertain)
+            XCTAssertFalse(try XCTUnwrap(restarted.progress()).preKeyPublicationBlocked)
+            sender.calls = []
+            try await restarted.publishPreKeys()
+            XCTAssertEqual(sender.calls, [.status])
+            XCTAssertEqual(nextSender.identities, [.aci, .pni])
+            XCTAssertTrue(try XCTUnwrap(restarted.progress()).preKeyPublicationComplete)
+        }
+    }
+
+    @MainActor
+    func testOwnedPreKeyRestartReplaysOnlyUnacknowledgedPNI() async throws {
+        let (store, sender, publisher, coordinator, configuration) = try await preKeyFixture()
+        publisher.beforeSend = { identity, _ in publisher.fail = identity == .pni }
+        do { try await coordinator.publishPreKeys(); XCTFail() } catch {}
+        publisher.beforeSend = nil
+        let saved = try XCTUnwrap(store.load()?.preKeyPublication)
+        XCTAssertEqual(saved.aci.state, .acknowledged); XCTAssertEqual(saved.pni.state, .dispatched)
+        let reopened = MemoryStore(); reopened.bytes = store.bytes; reopened.supportsNativeInstallation = true
+        let next = PreKeySender()
+        next.beforeSend = { identity, record in
+            XCTAssertEqual(identity, .pni)
+            XCTAssertEqual(record.preKeyPublication?.route, saved.route)
+        }
+        let restarted = BConnectedEnrollmentCoordinator(persistence: reopened, client: sender, publicationConfiguration: configuration, preKeyPublisher: next)
+        try await restarted.publishPreKeys()
+        XCTAssertEqual(next.identities, [.pni]); XCTAssertEqual(next.bodies, [saved.pni.request])
+        XCTAssertTrue(try XCTUnwrap(restarted.progress()).preKeyPublicationComplete)
+    }
+
+    @MainActor
+    func testLegacyPreparedAndUncertainPreKeysNeverMigrateOrSend() async throws {
+        for state in [BConnectedEnrollmentRecord.Publication.State.prepared, .dispatched] {
+            let (store, sender, publisher, _, configuration) = try await preKeyFixture()
+            var record = try store.preparePreKeys(configuration: configuration)
+            let modern = record.preKeyPublication!
+            record.preKeyPublication = .init(version: 1, route: nil, contextHash: try record.preKeyContextHash(), aci: modern.aci, pni: modern.pni)
+            record.preKeyPublication?.aci.state = state
+            store.bytes = try JSONEncoder().encode(record)
+            // Decodes the old shape with absent optional route; a new process preserves it.
+            let reopened = MemoryStore(); reopened.bytes = store.bytes; reopened.supportsNativeInstallation = true
+            let restarted = BConnectedEnrollmentCoordinator(persistence: reopened, client: sender, publicationConfiguration: configuration, preKeyPublisher: publisher)
             do { try await restarted.publishPreKeys(); XCTFail() }
             catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .uncertainPreKeyPublication) }
-            XCTAssertTrue(nextSender.identities.isEmpty)
-            XCTAssertEqual(try reopened.load()?.preKeyPublication, saved)
-            XCTAssertTrue(try XCTUnwrap(restarted.progress()).preKeyPublicationUncertain)
+            XCTAssertTrue(publisher.identities.isEmpty)
+            XCTAssertEqual(try reopened.load()?.preKeyPublication, record.preKeyPublication)
+            XCTAssertTrue(try XCTUnwrap(restarted.progress()).preKeyPublicationBlocked)
+            var dispatched = record; dispatched.preKeyPublication?.aci.state = .dispatched
+            XCTAssertThrowsError(try BConnectedPreKeyClient().request(.aci, record: dispatched, configuration: configuration))
+        }
+    }
+
+    func testOwnedPreKeyContractOriginAndOperationIdentityCannotChange() async throws {
+        let bytes = try await preKeyRecordBytes()
+        let original = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        for (field, value) in [("contract", "other"), ("origin", "https://other.example.invalid"),
+                               ("pathPrefix", "/v2/keys/"), ("aciOperationId", UUID().uuidString.lowercased()),
+                               ("pniOperationId", "../invalid")] {
+            var changed = original
+            var keys = changed["preKeyPublication"] as! [String: Any]
+            var route = keys["route"] as! [String: Any]
+            route[field] = value; keys["route"] = route; changed["preKeyPublication"] = keys
+            let record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: JSONSerialization.data(withJSONObject: changed))
+            XCTAssertThrowsError(try record.validate())
         }
     }
 
@@ -137,7 +202,9 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
             if identity == .aci { record.preKeyPublication?.aci.state = .dispatched }
             else { record.preKeyPublication?.aci.state = .acknowledged; record.preKeyPublication?.pni.state = .dispatched }
             let request = try client.request(identity, record: record, configuration: configuration)
-            XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid:8443/v2/keys?identity=" + identity.rawValue)
+            let route = try XCTUnwrap(record.preKeyPublication?.route)
+            XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid:8443/v1/bconnected/keys/initial/" + route.operationId(identity) + "?identity=" + identity.rawValue)
+            XCTAssertNotEqual(route.aciOperationId, route.pniOperationId)
             XCTAssertEqual(request.httpMethod, "PUT")
             XCTAssertEqual(request.httpBody, record.preKeyPublication?.batch(identity).request)
             XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Basic " + Data((record.installedAccount!.aci.lowercased() + ":" + record.password).utf8).base64EncodedString())
@@ -146,7 +213,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
             XCTAssertEqual((body["preKeys"] as? [[String: Any]])?.count, 100)
             XCTAssertEqual((body["pqPreKeys"] as? [[String: Any]])?.count, 100)
             http.result = (Data(), 204); try await client.send(identity, record: record, configuration: configuration)
-            for invalid in [(Data(), 200), (Data("{}".utf8), 204), (Data(), 302), (Data(), 403)] {
+            for invalid in [(Data(), 200), (Data("{}".utf8), 204), (Data(), 302), (Data(), 400), (Data(), 401), (Data(), 404), (Data(), 409), (Data(), 503)] {
                 http.result = invalid
                 do { try await client.send(identity, record: record, configuration: configuration); XCTFail() } catch {}
             }
@@ -797,7 +864,8 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
         return try transaction { record in
             guard var value = record, value.publication?.complete == true else { throw BConnectedEnrollmentError.immutableConflict }
             if value.preKeyPublication == nil {
-                value.preKeyPublication = .init(version: 1, contextHash: try value.preKeyContextHash(),
+                let route = BConnectedEnrollmentRecord.PreKeyPublication.Route.generate(configuration: configuration)
+                value.preKeyPublication = .init(version: 2, route: route, contextHash: try value.preKeyContextHash(route: route),
                     aci: try testPreKeyBatch(value.aci), pni: try testPreKeyBatch(value.pni))
             }
             record = value; return value
@@ -807,7 +875,8 @@ private final class MemoryStore: BConnectedEnrollmentPersistence {
         if acknowledge && failPreKeyAcknowledgement { throw BConnectedEnrollmentError.persistenceUnavailable }
         return try transaction { record in
             guard var value = record, var keys = value.preKeyPublication, keys == expected.preKeyPublication,
-                  keys.batch(identity).state == (acknowledge ? .dispatched : .prepared) else { throw BConnectedEnrollmentError.immutableConflict }
+                  keys.version == 2,
+                  keys.batch(identity).state == (acknowledge ? .dispatched : .prepared) || (!acknowledge && keys.batch(identity).state == .dispatched) else { throw BConnectedEnrollmentError.immutableConflict }
             if identity == .aci { keys.aci.state = acknowledge ? .acknowledged : .dispatched }
             else { keys.pni.state = acknowledge ? .acknowledged : .dispatched }
             value.preKeyPublication = keys; record = value; return value

@@ -72,9 +72,12 @@ final class BConnectedPreKeyClient: BConnectedPreKeySending {
         try record.validate()
         guard let account = record.installedAccount, account.deviceId == 1,
               record.publication?.configurationHash == configuration.hash,
-              let keys = record.preKeyPublication, keys.batch(identity).state == .dispatched else { throw BConnectedEnrollmentError.immutableConflict }
+              let keys = record.preKeyPublication, keys.version == 2, let route = keys.route,
+              route.origin == configuration.origin.absoluteString, route.configurationHash == configuration.hash,
+              keys.batch(identity).state == .dispatched else { throw BConnectedEnrollmentError.immutableConflict }
         var components = URLComponents(url: configuration.origin, resolvingAgainstBaseURL: false)!
-        components.path = "/v2/keys"; components.queryItems = [URLQueryItem(name: "identity", value: identity.rawValue)]
+        components.path = route.pathPrefix + route.operationId(identity)
+        components.queryItems = [URLQueryItem(name: "identity", value: identity.rawValue)]
         var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.httpMethod = "PUT"; request.httpBody = keys.batch(identity).request
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -43,6 +43,7 @@ public struct BConnectedEnrollmentProgress {
     public let accountPublicationNeedsExplicitRetry: Bool
     public let preKeyPublicationComplete: Bool
     public let preKeyPublicationUncertain: Bool
+    public let preKeyPublicationBlocked: Bool
 }
 
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
@@ -117,6 +118,31 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     }
 
     struct PreKeyPublication: Codable, Equatable {
+        /// Frozen before dispatch. Version 1 journals have no route and must never migrate:
+        /// their replace-pool endpoint may already have consumed keys without a tombstone.
+        struct Route: Codable, Equatable {
+            let contract: String
+            let origin: String
+            let pathPrefix: String
+            let configurationHash: Data
+            let aciOperationId: String
+            let pniOperationId: String
+
+            static func generate(configuration: BConnectedPublicationConfiguration) -> Self {
+                .init(contract: "bconnected-initial-prekeys-v1", origin: configuration.origin.absoluteString,
+                      pathPrefix: "/v1/bconnected/keys/initial/", configurationHash: configuration.hash,
+                      aciOperationId: UUID().uuidString.lowercased(), pniOperationId: UUID().uuidString.lowercased())
+            }
+            func validate() throws {
+                guard contract == "bconnected-initial-prekeys-v1", pathPrefix == "/v1/bconnected/keys/initial/",
+                      let url = URL(string: origin), url.absoluteString == origin, configurationHash.count == 32,
+                      try BConnectedEnrollmentWire.uuid(aciOperationId) == aciOperationId,
+                      try BConnectedEnrollmentWire.uuid(pniOperationId) == pniOperationId,
+                      aciOperationId != pniOperationId else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                _ = try BConnectedEnrollmentEndpoint(origin: url)
+            }
+            func operationId(_ identity: BConnectedPreKeyIdentity) -> String { identity == .aci ? aciOperationId : pniOperationId }
+        }
         struct Batch: Codable, Equatable {
             let ec: [Data]
             let pq: [Data]
@@ -149,27 +175,35 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
             }
         }
         let version: Int
+        let route: Route?
         let contextHash: Data
         var aci: Batch
         var pni: Batch
         var complete: Bool { aci.state == .acknowledged && pni.state == .acknowledged }
         var uncertain: Bool { aci.state == .dispatched || pni.state == .dispatched }
+        var blocked: Bool { version != 2 && !complete }
         func batch(_ identity: BConnectedPreKeyIdentity) -> Batch { identity == .aci ? aci : pni }
     }
 
     /// Includes the original credential and binding, never a renewed request's authority or identity.
-    func preKeyContextHash() throws -> Data {
+    func preKeyContextHash(route: PreKeyPublication.Route? = nil) throws -> Data {
         guard let publication, publication.complete, let binding, let operationId, let installedAccount else {
             throw BConnectedEnrollmentError.immutableConflict
         }
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        return Data(SHA256.hash(data: try BConnectedEnrollmentWire.encode([
+        var fields: [String: Any] = [
             "domain": "BConnected pending one-time keys v1", "attempt": attempt, "commitment": keyCommitment,
             "member": binding.memberId, "challenge": binding.challenge, "operation": operationId,
             "account": try encoder.encode(installedAccount).base64EncodedString(), "password": password,
             "signalAgent": originalSignalAgent, "userAgent": originalUserAgent,
             "publication": try encoder.encode(publication).base64EncodedString(),
-        ])))
+        ]
+        if let route {
+            try route.validate()
+            fields["domain"] = "BConnected pending one-time keys v2"
+            fields["route"] = try encoder.encode(route).base64EncodedString()
+        }
+        return Data(SHA256.hash(data: try BConnectedEnrollmentWire.encode(fields)))
     }
 
     struct AccountEntropyReceipt: Codable, Equatable {
@@ -286,7 +320,9 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
 
     func validatePreKeyPublication() throws {
         guard let keys = preKeyPublication else { return }
-        guard keys.version == 1, keys.contextHash == (try preKeyContextHash()),
+        guard (keys.version == 1 && keys.route == nil) || (keys.version == 2 && keys.route != nil),
+              keys.route == nil || keys.route?.configurationHash == publication?.configurationHash,
+              keys.contextHash == (try preKeyContextHash(route: keys.route)),
               keys.pni.state == .prepared || keys.aci.state == .acknowledged,
               keys.aci.request == (try PreKeyPublication.Batch.request(ec: keys.aci.ec, pq: keys.aci.pq, identity: aci)),
               keys.pni.request == (try PreKeyPublication.Batch.request(ec: keys.pni.ec, pq: keys.pni.pq, identity: pni)) else {
@@ -380,7 +416,8 @@ public final class BConnectedEnrollmentCoordinator {
                          accountPublicationComplete: record.publication?.complete == true,
                          accountPublicationNeedsExplicitRetry: record.publication?.uncertain == true,
                          preKeyPublicationComplete: record.preKeyPublication?.complete == true,
-                         preKeyPublicationUncertain: record.preKeyPublication?.uncertain == true)
+                         preKeyPublicationUncertain: record.preKeyPublication?.uncertain == true,
+                         preKeyPublicationBlocked: record.preKeyPublication?.blocked == true)
         }
     }
 
@@ -443,8 +480,8 @@ public final class BConnectedEnrollmentCoordinator {
         // Publication acknowledgement is not a services-ready capability or registration event.
     }
 
-    /// The replace-pool server API has no idempotency tombstone. Any uncertain dispatch is
-    /// terminal here: even an explicit retry could restore already-consumed one-time key IDs.
+    /// Only the owned initial-publication ledger supports replay of the original operation.
+    /// Legacy replace-pool journals never migrate or resend, even after a fresh status check.
     public func publishPreKeys() async throws {
         guard !inFlight else { throw BConnectedEnrollmentError.busy }
         guard let configuration = publicationConfiguration, let preKeyPublisher,
@@ -457,7 +494,7 @@ public final class BConnectedEnrollmentCoordinator {
         for identity in [BConnectedPreKeyIdentity.aci, .pni] {
             guard let keys = record.preKeyPublication else { throw BConnectedEnrollmentError.persistenceUnavailable }
             if keys.batch(identity).state == .acknowledged { continue }
-            guard keys.batch(identity).state == .prepared else { throw BConnectedEnrollmentError.uncertainPreKeyPublication }
+            guard keys.version == 2, keys.route != nil else { throw BConnectedEnrollmentError.uncertainPreKeyPublication }
             record = try persistence.transitionPreKeys(expected: record, identity: identity, acknowledge: false)
             try Task.checkCancellation()
             try await preKeyPublisher.send(identity, record: record, configuration: configuration)

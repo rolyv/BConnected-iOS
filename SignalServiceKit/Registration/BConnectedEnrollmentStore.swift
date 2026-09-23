@@ -44,7 +44,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
         guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
         return try db.writeWithRollbackIfThrows { tx in
             let record = try preparePublication(configuration: configuration, tx: tx)
-            return try nativeInstaller.preparePreKeys(record: record, tx: tx)
+            return try nativeInstaller.preparePreKeys(record: record, configuration: configuration, tx: tx)
         }
     }
 

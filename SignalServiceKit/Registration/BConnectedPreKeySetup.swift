@@ -6,11 +6,14 @@ import LibSignalClient
 /// Pending-device batches only. Every call belongs to the caller's SQLCipher rollback transaction
 /// after native account/profile/entropy validation. No network, rotation or readiness side effects.
 enum BConnectedPreKeySetup {
-    static func prepare(record: BConnectedEnrollmentRecord, preKeyStore: PreKeyStore,
+    static func prepare(record: BConnectedEnrollmentRecord, configuration: BConnectedPublicationConfiguration, preKeyStore: PreKeyStore,
                         tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
         try record.validate()
         try requireStored(record, tx: tx)
-        guard record.publication?.complete == true else { throw BConnectedEnrollmentError.immutableConflict }
+        guard record.publication?.complete == true, record.publication?.configurationHash == configuration.hash,
+              record.preKeyPublication?.route == nil || record.preKeyPublication?.route?.origin == configuration.origin.absoluteString else {
+            throw BConnectedEnrollmentError.immutableConflict
+        }
         if record.preKeyPublication != nil {
             try validateNative(record, preKeyStore: preKeyStore, tx: tx)
             return record
@@ -30,7 +33,8 @@ enum BConnectedPreKeySetup {
             return batch
         }
         var record = record
-        record.preKeyPublication = .init(version: 1, contextHash: try record.preKeyContextHash(),
+        let route = BConnectedEnrollmentRecord.PreKeyPublication.Route.generate(configuration: configuration)
+        record.preKeyPublication = .init(version: 2, route: route, contextHash: try record.preKeyContextHash(route: route),
             aci: try generate(.aci, record.aci), pni: try generate(.pni, record.pni))
         try record.validate()
         try validateNative(record, preKeyStore: preKeyStore, tx: tx)
@@ -44,9 +48,14 @@ enum BConnectedPreKeySetup {
         try record.validate()
         try requireStored(record, tx: tx)
         guard try encoded(record) == encoded(expected), var keys = record.preKeyPublication,
+              keys.version == 2,
               identity != .pni || keys.aci.state == .acknowledged,
-              keys.batch(identity).state == (acknowledge ? .dispatched : .prepared) else { throw BConnectedEnrollmentError.immutableConflict }
+              keys.batch(identity).state == (acknowledge ? .dispatched : .prepared)
+                || (!acknowledge && keys.version == 2 && keys.batch(identity).state == .dispatched) else { throw BConnectedEnrollmentError.immutableConflict }
         try validateNative(record, preKeyStore: preKeyStore, tx: tx)
+        // Revalidate the exact saved snapshot and native keys without renewing the operation,
+        // reallocating keys or rewriting a durable dispatch marker after process restart.
+        if !acknowledge && keys.batch(identity).state == .dispatched { return record }
         if identity == .aci { keys.aci.state = acknowledge ? .acknowledged : .dispatched }
         else { keys.pni.state = acknowledge ? .acknowledged : .dispatched }
         var record = record; record.preKeyPublication = keys

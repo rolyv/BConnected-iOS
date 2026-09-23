@@ -60,7 +60,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     var mayPublishPreKeys: Bool {
         coordinator?.supportsPreKeyPublication == true && memberAllowsVerification && progress?.lastObservation?.state == .active
             && progress?.accountPublicationComplete == true && progress?.preKeyPublicationComplete != true
-            && progress?.preKeyPublicationUncertain != true
+            && progress?.preKeyPublicationBlocked != true
     }
 
     var title: String {
@@ -94,8 +94,11 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         if canApply { return "Use your invitation code to apply with your name and graduation year. An administrator must approve your membership before phone verification." }
         guard let progress else { return "Signup will verify your alumni membership and phone number. Invitation and approval setup is not available in this build yet." }
         guard progress.hasApprovedIntentBinding else { return "Your device setup is saved. Alumni approval must be linked before phone verification can begin." }
+        if progress.preKeyPublicationBlocked {
+            return "This saved device setup needs administrator review before continuing. Messaging remains unavailable. Your keys have been kept."
+        }
         if progress.preKeyPublicationUncertain {
-            return "We could not confirm the saved device setup request. Messaging remains unavailable. Your keys have been kept; contact the alumni administrator before continuing."
+            return "We could not confirm the saved device setup request. You can publish the same saved request again when the service is available. Messaging remains unavailable."
         }
         if progress.smsOutcomeNeedsExplicitDecision {
             return "We could not confirm whether your last SMS request completed. Check status before deciding to send another code. Your device setup is saved."

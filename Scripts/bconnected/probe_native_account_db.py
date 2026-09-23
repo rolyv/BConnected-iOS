@@ -93,7 +93,7 @@ def main():
                   "profile-acknowledge", "prekeys-crash", "verify-no-prekeys", "prekeys-commit-crash", "verify-prekeys",
                   "prekeys-dispatch-crash", "verify-prekeys", "prekeys-dispatch-commit-crash", "verify-prekeys-dispatched",
                   "prekeys-ack-crash", "verify-prekeys-dispatched", "prekeys-ack-commit-crash", "verify-prekeys-aci-ack",
-                  "prekeys-finish", "verify-prekeys-complete", "prekeys-conflicts"]
+                  "prekeys-finish", "verify-prekeys-complete", "prekeys-conflicts", "prekeys-legacy"]
         marker = Path(str(database) + ".kill-point")
         for phase in phases:
             marker.unlink(missing_ok=True)
@@ -108,7 +108,7 @@ def main():
                 print(f"PASS {phase}: deliberate SIGKILL observed", flush=True)
             else:
                 result.check_returncode()
-        print("46 encrypted-file process phases passed; eighteen verified SIGKILL boundaries; no service readiness release")
+        print(f"{len(phases)} encrypted-file process phases passed; eighteen verified SIGKILL boundaries; no service readiness release")
 
 if __name__ == "__main__":
     main()

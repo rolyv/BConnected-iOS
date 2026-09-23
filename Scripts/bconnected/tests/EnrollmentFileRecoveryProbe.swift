@@ -84,7 +84,7 @@ func publication(_ tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord 
 }
 
 func preparePreKeys(_ tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
-    try BConnectedPreKeySetup.prepare(record: publication(tx), preKeyStore: preKeys, tx: tx)
+    try BConnectedPreKeySetup.prepare(record: publication(tx), configuration: publicationConfiguration, preKeyStore: preKeys, tx: tx)
 }
 func counters(_ tx: DBReadTransaction) throws -> Data {
     var values: [String: Any] = [:]
@@ -286,7 +286,7 @@ case "verify-no-prekeys", "verify-prekeys", "verify-prekeys-dispatched", "verify
             let current = try preparePreKeys(tx)
             let ledger = current.preKeyPublication!
             let original = try JSONDecoder().decode(BConnectedEnrollmentRecord.PreKeyPublication.self, from: evidence.getData("frozen-prekeys", transaction: tx)!)
-            precondition(ledger.contextHash == original.contextHash)
+            precondition(ledger.contextHash == original.contextHash && ledger.route == original.route && ledger.version == 2)
             for identity in [BConnectedPreKeyIdentity.aci, .pni] {
                 let now = ledger.batch(identity), saved = original.batch(identity)
                 precondition(now.request == saved.request && now.ec == saved.ec && now.pq == saved.pq)
@@ -294,8 +294,14 @@ case "verify-no-prekeys", "verify-prekeys", "verify-prekeys-dispatched", "verify
             let expected: BConnectedEnrollmentRecord.Publication.State = mode == "verify-prekeys" ? .prepared : mode == "verify-prekeys-dispatched" ? .dispatched : .acknowledged
             precondition(ledger.aci.state == expected)
             precondition(ledger.pni.state == (mode == "verify-prekeys-complete" ? .acknowledged : .prepared))
-            // An uncertain dispatch has no transition back to prepared and cannot dispatch twice.
-            if ledger.aci.state != .prepared {
+            // An owned uncertain dispatch revalidates without changing bytes or allocating keys.
+            if ledger.aci.state == .dispatched {
+                let repeated = try BConnectedPreKeySetup.transition(record: current, expected: current, identity: .aci, acknowledge: false, preKeyStore: preKeys, tx: tx)
+                precondition(repeated.preKeyPublication == ledger)
+                let request = try BConnectedPreKeyClient().request(.aci, record: repeated, configuration: publicationConfiguration)
+                precondition(request.httpBody == original.aci.request)
+                precondition(request.url?.path == original.route!.pathPrefix + original.route!.aciOperationId)
+            } else if ledger.aci.state == .acknowledged {
                 do {
                     _ = try BConnectedPreKeySetup.transition(record: current, expected: current, identity: .aci, acknowledge: false, preKeyStore: preKeys, tx: tx)
                     preconditionFailure("repeat key dispatch accepted")
@@ -306,10 +312,10 @@ case "verify-no-prekeys", "verify-prekeys", "verify-prekeys-dispatched", "verify
         try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
         hidden(tx)
     }
-    print("PASS \(mode) fresh process: exact native private keys/public request bytes, counters and journal preserved with zero writes; no dispatch replay")
+    print("PASS \(mode) fresh process: exact native keys, operation, endpoint and public bytes preserved with zero writes; only owned unacknowledged replay permitted")
 case "prekeys-conflicts":
     enum ProbeRollback: Error { case expected }
-    for kind in 0..<9 {
+    for kind in 0..<12 {
         let beforeBytes = try database.read { enrollment.getData("attempt", transaction: DBReadTransaction(database: $0)) }
         do {
             try write { tx in
@@ -331,7 +337,16 @@ case "prekeys-conflicts":
                     record.observation = .init(operationId: record.operationId!, state: .suspended, registrationAuthorized: false,
                         phoneVerified: true, nextSmsSeconds: nil, nextCheckSeconds: nil, expiresInSeconds: nil, account: record.installedAccount)
                     enrollment.setData(try JSONEncoder().encode(record), key: "attempt", transaction: tx)
-                default: try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = 'Changed'")
+                case 8: try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = 'Changed'")
+                default:
+                    var root = try JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as! [String: Any]
+                    var keys = root["preKeyPublication"] as! [String: Any]
+                    var route = keys["route"] as! [String: Any]
+                    if kind == 9 { route["aciOperationId"] = UUID().uuidString.lowercased() }
+                    if kind == 10 { route["origin"] = "https://other.example.invalid" }
+                    if kind == 11 { route["pathPrefix"] = "/v2/keys/" }
+                    keys["route"] = route; root["preKeyPublication"] = keys
+                    enrollment.setData(try JSONSerialization.data(withJSONObject: root), key: "attempt", transaction: tx)
                 }
                 do {
                     if kind == 6 {
@@ -349,6 +364,33 @@ case "prekeys-conflicts":
             _ = try preparePreKeys(tx); hidden(tx)
         }
     }
-    print("PASS nine rollback-isolated consumed/changed/foreign key, counter, binding, authority, suspension and profile conflicts rejected; original state remains intact")
+    print("PASS twelve rollback-isolated key/counter/account/authority/profile/operation/origin/contract conflicts rejected; original state remains intact")
+case "prekeys-legacy":
+    enum ProbeRollback: Error { case expected }
+    for state in [BConnectedEnrollmentRecord.Publication.State.prepared, .dispatched] {
+        do {
+            try write { tx in
+                var record = try readRecord(tx)
+                let modern = record.preKeyPublication!
+                record.preKeyPublication = .init(version: 1, route: nil, contextHash: try record.preKeyContextHash(), aci: modern.aci, pni: modern.pni)
+                record.preKeyPublication?.aci.state = state
+                record.preKeyPublication?.pni.state = .prepared
+                let legacyBytes = try JSONEncoder().encode(record)
+                enrollment.setData(legacyBytes, key: "attempt", transaction: tx)
+                let before = try Int.fetchOne(tx.database, sql: "SELECT total_changes()")!
+                let retained = try preparePreKeys(tx)
+                precondition(retained.preKeyPublication == record.preKeyPublication && retained.preKeyPublication!.blocked)
+                precondition(enrollment.getData("attempt", transaction: tx) == legacyBytes)
+                try check(Int.fetchOne(tx.database, sql: "SELECT total_changes()") == before)
+                do {
+                    _ = try BConnectedPreKeySetup.transition(record: retained, expected: retained, identity: .aci, acknowledge: false, preKeyStore: preKeys, tx: tx)
+                    preconditionFailure("legacy journal migrated or dispatched")
+                } catch BConnectedEnrollmentError.immutableConflict {}
+                hidden(tx)
+                throw ProbeRollback.expected
+            }
+        } catch ProbeRollback.expected {}
+    }
+    print("PASS old prepared/dispatched replace-pool SQLCipher journals preserved without migration, key allocation, sends or state transition")
 default: preconditionFailure("unknown probe mode")
 }
