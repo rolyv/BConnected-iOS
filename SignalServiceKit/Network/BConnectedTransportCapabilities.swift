@@ -7,6 +7,8 @@ public enum BConnectedTransportCapability: String, CaseIterable, Sendable {
     case provisioning
     case chatPreconnect
     case networkChange
+    case stories
+    case groups
     case proxy
     case domainFronting
     case phoneContactDiscovery
@@ -41,7 +43,7 @@ public struct BConnectedTransportCapabilities: Equatable, Sendable {
     /// Preserves existing upstream application policy for explicitly selected legacy transports.
     public static let legacy = Self(Set(BConnectedTransportCapability.allCases))
     public static let chatOnly = Self([
-        .authenticatedChat, .unauthenticatedChat, .provisioning, .chatPreconnect, .networkChange,
+        .authenticatedChat, .unauthenticatedChat, .provisioning, .chatPreconnect, .networkChange, .stories,
     ])
 
     public func allows(_ capability: BConnectedTransportCapability) -> Bool {

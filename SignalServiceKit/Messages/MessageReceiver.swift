@@ -110,6 +110,10 @@ public final class MessageReceiver {
         _ decryptedEnvelope: DecryptedIncomingEnvelope,
         tx: DBWriteTransaction,
     ) {
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        // Sender-key distribution belongs to groups, which this alpha cannot join.
+        return
+        #else
         // Currently, this function is only used for SKDM processing. Since this is
         // idempotent, we don't need to check for a duplicate envelope.
         //
@@ -120,6 +124,7 @@ public final class MessageReceiver {
         if let skdmBytes = decryptedEnvelope.content?.senderKeyDistributionMessage {
             handleIncomingEnvelope(decryptedEnvelope, withSenderKeyDistributionMessage: skdmBytes, transaction: tx)
         }
+        #endif
     }
 
     public func processEnvelope(
@@ -153,6 +158,14 @@ public final class MessageReceiver {
                     plaintextData: plaintextData,
                     isPlaintextCipher: nil,
                 )
+                #if !BCONNECTED_LEGACY_TRANSPORT
+                guard !wasReceivedByUD, !decryptedEnvelope.envelope.story,
+                      let content = decryptedEnvelope.content,
+                      Self.isAllowedDMAlphaContent(content) else {
+                    Logger.warn("Discarding content outside the foreground text-DM scope")
+                    return
+                }
+                #endif
                 checkForUnknownLinkedDevice(in: decryptedEnvelope, tx: tx)
                 let buildResult = MessageReceiverRequest.buildRequest(
                     for: decryptedEnvelope,
@@ -183,6 +196,34 @@ public final class MessageReceiver {
             Logger.warn("Dropping invalid envelope \(error)")
         }
     }
+
+    #if !BCONNECTED_LEGACY_TRANSPORT
+    static func isAllowedDMAlphaContent(_ content: SSKProtoContent) -> Bool {
+        guard !content.hasUnknownFields, content.syncMessage == nil,
+              content.callMessage == nil, content.nullMessage == nil,
+              content.storyMessage == nil, content.editMessage == nil,
+              !content.hasSenderKeyDistributionMessage, !content.hasDecryptionErrorMessage else {
+            return false
+        }
+        if let data = content.dataMessage {
+            return data.body?.isEmpty == false && !data.isViewOnce && !data.hasUnknownFields
+                && data.attachments.isEmpty && data.groupV2 == nil && data.quote == nil
+                && data.contact.isEmpty && data.preview.isEmpty && data.sticker == nil
+                && data.reaction == nil && data.delete == nil && data.groupCallUpdate == nil
+                && data.payment == nil && data.storyContext == nil && data.giftBadge == nil
+                && data.pollCreate == nil && data.pollTerminate == nil && data.pollVote == nil
+                && data.pinMessage == nil && data.unpinMessage == nil && data.adminDelete == nil
+                && !data.hasFlags && content.receiptMessage == nil && content.typingMessage == nil
+        }
+        if let receipt = content.receiptMessage {
+            return content.typingMessage == nil && !receipt.hasUnknownFields
+        }
+        if let typing = content.typingMessage {
+            return typing.groupID == nil && !typing.hasUnknownFields
+        }
+        return false
+    }
+    #endif
 
     func handleRequest(
         _ request: MessageReceiverRequest,

@@ -503,6 +503,17 @@ private struct ProcessingRequestBuilder {
     ) -> ProcessingRequest.State {
         owsPrecondition(CurrentAppContext().shouldProcessIncomingMessages)
 
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        // This is the normal receive path. Reject out-of-scope content before SKDM
+        // preprocessing, PNI sharing, group queueing, or any message side effect.
+        guard !decryptedEnvelope.wasReceivedByUD,
+              !decryptedEnvelope.envelope.story,
+              let content = decryptedEnvelope.content,
+              MessageReceiver.isAllowedDMAlphaContent(content) else {
+            return .completed(error: nil)
+        }
+        #endif
+
         // Pre-processing has to happen during the same transaction that performed
         // decryption.
         messageReceiver.preprocessEnvelope(decryptedEnvelope, tx: tx)

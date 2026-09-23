@@ -34,6 +34,63 @@ final class BConnectedAppTransportTest: XCTestCase {
             var changed = info; changed["BConnectedMessagingHost"] = host
             assertInvalid(changed)
         }
+        for host in ["chat.signal.org", "signal.org", "chat.whispersystems.org", "127.0.0.1", "0x7f.0.0.1"] {
+            var changed = info; changed["BConnectedMessagingHost"] = host
+            assertInvalid(changed)
+        }
+    }
+
+    private func dmInfo() throws -> [String: Any] {
+        var configured = info
+        configured.merge(try cryptographicInfo()) { _, new in new }
+        configured["BConnectedPilotScope"] = "foreground-text-dm-v1"
+        configured["BConnectedEnrollmentOrigin"] = "https://enrollment.example.invalid"
+        configured["BConnectedCommunityOrigin"] = "https://community.example.invalid"
+        configured["BConnectedAccountPublicationOrigin"] = "https://publication.example.invalid"
+        configured["BConnectedAccountPublicationTrust"] = "system"
+        return configured
+    }
+
+    func testDMAlphaRequiresExplicitScopeAndEveryIndependentAuthority() throws {
+        let complete = try dmInfo()
+        let configuration = try BConnectedDMAlphaConfiguration(info: complete, userAgent: "BConnected fixture")
+        XCTAssertEqual(configuration.enrollment.origin.absoluteString, "https://enrollment.example.invalid")
+        XCTAssertEqual(configuration.community.origin.absoluteString, "https://community.example.invalid")
+        XCTAssertEqual(configuration.publication.origin.absoluteString, "https://publication.example.invalid")
+        for key in complete.keys {
+            var missing = complete; missing.removeValue(forKey: key)
+            XCTAssertThrowsError(try BConnectedDMAlphaConfiguration(info: missing, userAgent: "BConnected fixture"))
+        }
+        for scope in ["", "full-pilot", "foreground-text-dm-v2"] {
+            var changed = complete; changed["BConnectedPilotScope"] = scope
+            XCTAssertThrowsError(try BConnectedDMAlphaConfiguration(info: changed, userAgent: "BConnected fixture"))
+        }
+    }
+
+    func testDMAlphaRejectsUpstreamOrUntrustedRESTOrigins() throws {
+        let complete = try dmInfo()
+        for key in ["BConnectedEnrollmentOrigin", "BConnectedCommunityOrigin", "BConnectedAccountPublicationOrigin"] {
+            for origin in ["http://owned.example.invalid", "https://api.signal.org", "https://owned.example.invalid/path"] {
+                var changed = complete; changed[key] = origin
+                XCTAssertThrowsError(try BConnectedDMAlphaConfiguration(info: changed, userAgent: "BConnected fixture"))
+            }
+        }
+        var changed = complete; changed["BConnectedAccountPublicationTrust"] = "insecure"
+        XCTAssertThrowsError(try BConnectedDMAlphaConfiguration(info: changed, userAgent: "BConnected fixture"))
+    }
+
+    func testDMAlphaHasOnlyAuthenticatedForegroundChatCapabilities() throws {
+        let configuration = try BConnectedDMAlphaConfiguration(info: dmInfo(), userAgent: "BConnected fixture")
+        #if BCONNECTED_OWNED_LIBSIGNAL
+        let transport = try configuration.makeTransport()
+        XCTAssertFalse(transport is Net)
+        XCTAssertEqual(Set(BConnectedTransportCapability.allCases.filter(transport.capabilities.allows)),
+                       [.authenticatedChat, .networkChange])
+        #else
+        XCTAssertThrowsError(try configuration.makeTransport()) {
+            XCTAssertEqual($0 as? BConnectedTransportError, .ownedLibsignalUnavailable)
+        }
+        #endif
     }
 
     func testPortRequiresExplicitCanonicalNonzeroUInt16String() {
@@ -185,6 +242,57 @@ final class BConnectedAppTransportTest: XCTestCase {
         supplied["BConnectedSenderCertificateTrustRootsBase64"] = roots
         XCTAssertEqual(try BConnectedOwnedCryptographicConfiguration(info: supplied).senderCertificateTrustRoots, roots)
     }
+
+    #if !BCONNECTED_LEGACY_TRANSPORT
+    func testDMAlphaContentPolicyRoundTripsNativeTextReceiptAndTypingProtos() throws {
+        func roundTrip(_ builder: SSKProtoContentBuilder) throws -> SSKProtoContent {
+            try SSKProtoContent(serializedData: builder.buildSerializedData())
+        }
+
+        let text = SSKProtoDataMessage.builder()
+        text.setBody("hello from a primary device")
+        let textContent = SSKProtoContent.builder()
+        textContent.setDataMessage(try text.build())
+        XCTAssertTrue(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(textContent)))
+
+        let media = SSKProtoDataMessage.builder()
+        media.setBody("looks like text")
+        media.setIsViewOnce(true)
+        let mediaContent = SSKProtoContent.builder()
+        mediaContent.setDataMessage(try media.build())
+        XCTAssertFalse(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(mediaContent)))
+
+        let empty = SSKProtoContent.builder()
+        empty.setDataMessage(try SSKProtoDataMessage.builder().build())
+        XCTAssertFalse(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(empty)))
+
+        let receipt = SSKProtoReceiptMessage.builder().buildInfallibly()
+        let receiptContent = SSKProtoContent.builder()
+        receiptContent.setReceiptMessage(receipt)
+        XCTAssertTrue(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(receiptContent)))
+
+        let typing = try SSKProtoTypingMessage.builder(timestamp: 1).build()
+        let typingContent = SSKProtoContent.builder()
+        typingContent.setTypingMessage(typing)
+        XCTAssertTrue(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(typingContent)))
+
+        let groupTyping = SSKProtoTypingMessage.builder(timestamp: 1)
+        groupTyping.setGroupID(Data([1]))
+        let groupTypingContent = SSKProtoContent.builder()
+        groupTypingContent.setTypingMessage(try groupTyping.build())
+        XCTAssertFalse(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(groupTypingContent)))
+
+        let unknownReceipt = try SSKProtoReceiptMessage(serializedData: receipt.serializedData() + Data([0xf8, 0x07, 0x01]))
+        let unknownReceiptContent = SSKProtoContent.builder()
+        unknownReceiptContent.setReceiptMessage(unknownReceipt)
+        XCTAssertFalse(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(unknownReceiptContent)))
+
+        let unknownTyping = try SSKProtoTypingMessage(serializedData: typing.serializedData() + Data([0xf8, 0x07, 0x01]))
+        let unknownTypingContent = SSKProtoContent.builder()
+        unknownTypingContent.setTypingMessage(unknownTyping)
+        XCTAssertFalse(MessageReceiver.isAllowedDMAlphaContent(try roundTrip(unknownTypingContent)))
+    }
+    #endif
 
     private func assertInvalidCryptography(_ info: [String: Any], file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertThrowsError(try BConnectedOwnedCryptographicConfiguration(info: info), file: file, line: line) {

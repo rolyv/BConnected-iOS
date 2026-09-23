@@ -33,6 +33,70 @@ private func uncaughtExceptionHandler(_ exception: NSException) {
     Logger.flush()
 }
 
+/// One UI scene shares the existing process bootstrap and encrypted account storage.
+/// UIKit still emits UIApplication lifecycle notifications consumed by MainAppContext;
+/// these callbacks invoke app behavior without reposting those notifications.
+@objc(BConnectedSceneDelegate)
+final class BConnectedSceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+    private var appDelegate: AppDelegate? { UIApplication.shared.delegate as? AppDelegate }
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let scene = scene as? UIWindowScene, let appDelegate else { return }
+        window = appDelegate.connectWindowScene(scene)
+        for context in options.urlContexts { open(context) }
+        for activity in options.userActivities { continueActivity(activity) }
+        if let shortcut = options.shortcutItem {
+            appDelegate.application(UIApplication.shared, performActionFor: shortcut) { _ in }
+        }
+    }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        appDelegate?.disconnectWindowScene(scene)
+        window = nil
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        appDelegate?.applicationWillEnterForeground(UIApplication.shared)
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        appDelegate?.applicationDidBecomeActive(UIApplication.shared)
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        appDelegate?.applicationWillResignActive(UIApplication.shared)
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        appDelegate?.applicationDidEnterBackground(UIApplication.shared)
+    }
+
+    func scene(_ scene: UIScene, openURLContexts contexts: Set<UIOpenURLContext>) {
+        for context in contexts { open(context) }
+    }
+
+    private func open(_ context: UIOpenURLContext) {
+        _ = appDelegate?.application(UIApplication.shared, open: context.url, options: [
+            .openInPlace: context.options.openInPlace,
+            .sourceApplication: context.options.sourceApplication as Any,
+            .annotation: context.options.annotation as Any,
+        ])
+    }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) { continueActivity(userActivity) }
+
+    private func continueActivity(_ activity: NSUserActivity) {
+        _ = appDelegate?.continueSceneActivity(activity)
+    }
+
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        guard let appDelegate else { completionHandler(false); return }
+        appDelegate.application(UIApplication.shared, performActionFor: shortcutItem, completionHandler: completionHandler)
+    }
+}
+
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     #if BCONNECTED_COMPILE_VALIDATION
@@ -48,6 +112,36 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     // MARK: - Lifecycle
+
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "BConnected", sessionRole: session.role)
+        configuration.delegateClass = BConnectedSceneDelegate.self
+        return configuration
+    }
+
+    private var connectedWindowScene: UIWindowScene?
+    private var didConfigureGlobalUI = false
+
+    /// Process setup and background-task registration still run once in didFinishLaunching.
+    /// Scene connection owns presentation, including the privacy and clock-skew windows.
+    fileprivate func connectWindowScene(_ scene: UIWindowScene) -> UIWindow? {
+        connectedWindowScene = scene
+        guard let window else { return nil }
+        window.windowScene = scene
+        window.frame = scene.coordinateSpace.bounds
+        if didConfigureGlobalUI {
+            AppEnvironment.shared.windowManagerRef.attachWindows(to: scene)
+        } else {
+            window.makeKeyAndVisible()
+        }
+        return window
+    }
+
+    fileprivate func disconnectWindowScene(_ scene: UIScene) {
+        guard connectedWindowScene === scene else { return }
+        connectedWindowScene = nil
+    }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
         Logger.info("")
@@ -361,7 +455,11 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         self.window = window
         mainAppContext.mainWindow = window
         window.rootViewController = rootViewController
-        window.makeKeyAndVisible()
+        if let connectedWindowScene {
+            window.windowScene = connectedWindowScene
+            window.frame = connectedWindowScene.coordinateSpace.bounds
+            window.makeKeyAndVisible()
+        }
         return window
     }
 
@@ -394,6 +492,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         screenLockUI.setupWithRootWindow(window)
         windowManager.setupWithRootWindow(window, screenBlockingWindow: screenLockUI.screenBlockingWindow)
+        didConfigureGlobalUI = true
+        if let connectedWindowScene { windowManager.attachWindows(to: connectedWindowScene) }
         screenLockUI.startObserving()
     }
 
@@ -1774,6 +1874,19 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         continue userActivity: NSUserActivity,
         restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void,
     ) -> Bool {
+        switch userActivity.activityType {
+        case "INStartVideoCallIntent":
+            return handleStartCallIntent(INStartVideoCallIntent.self, userActivity: userActivity,
+                                         contacts: \.contacts, isVideoCall: { _ in true })
+        case "INStartAudioCallIntent":
+            return handleStartCallIntent(INStartAudioCallIntent.self, userActivity: userActivity,
+                                         contacts: \.contacts, isVideoCall: { _ in false })
+        default:
+            return continueSceneActivity(userActivity)
+        }
+    }
+
+    fileprivate func continueSceneActivity(_ userActivity: NSUserActivity) -> Bool {
         AssertIsOnMainThread()
 
         if didAppLaunchFail {
@@ -1805,21 +1918,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 )
             }
             return true
-        case "INStartVideoCallIntent":
-            return handleStartCallIntent(
-                INStartVideoCallIntent.self,
-                userActivity: userActivity,
-                contacts: \.contacts,
-                isVideoCall: { _ in true },
-            )
-        case "INStartAudioCallIntent":
-            return handleStartCallIntent(
-                INStartAudioCallIntent.self,
-                userActivity: userActivity,
-                contacts: \.contacts,
-                isVideoCall: { _ in false },
-            )
         case "INStartCallIntent":
+            if BConnectedDMAlphaConfiguration.isForegroundTextAlphaScope { return false }
             return handleStartCallIntent(
                 INStartCallIntent.self,
                 userActivity: userActivity,

@@ -58,6 +58,8 @@ struct BConnectedOwnedTransportConfiguration {
               !host.split(separator: ".", omittingEmptySubsequences: false).contains(where: {
                   $0.isEmpty || $0.utf8.count > 63 || $0.first == "-" || $0.last == "-"
               }),
+              let hostOrigin = URL(string: "https://\(host)"),
+              (try? BConnectedOwnedOrigin.canonicalize(hostOrigin)) != nil,
               let portString = info["BConnectedMessagingPort"] as? String,
               let port = UInt16(portString), port > 0, String(port) == portString,
               !userAgent.isEmpty, !userAgent.utf8.contains(where: { $0 < 32 || $0 == 127 }),
@@ -84,17 +86,63 @@ struct BConnectedOwnedTransportConfiguration {
         self.userAgent = userAgent
     }
 
-    /// One iPhone per alumnus in this pilot. Stories use the retained chat transport;
-    /// this does not advertise that any Stories/media/server route is already deployed.
+    /// Foreground text DMs only: no anonymous socket, provisioning, preconnect, or Stories.
+    /// A native network-change notification does not grant any additional service route.
+    static let foregroundDMCapabilities: Set<BConnectedTransportCapability> = [
+        .authenticatedChat, .networkChange,
+    ]
+
+    /// Older composition policy retained for isolated transport probes. The runnable app
+    /// selects foregroundDMCapabilities through BConnectedDMAlphaConfiguration instead.
     static let pilotCapabilities: Set<BConnectedTransportCapability> = [
         .authenticatedChat, .unauthenticatedChat, .chatPreconnect, .networkChange,
     ]
 
-    func makeTransport() throws -> any BConnectedChatTransport {
+    func makeTransport(restrictingTo capabilities: Set<BConnectedTransportCapability> = BConnectedOwnedTransportConfiguration.pilotCapabilities) throws -> any BConnectedChatTransport {
         try BConnectedChatTransportFactory.owned(
             host: host, port: port, trust: trust, userAgent: userAgent,
-            restrictingTo: Self.pilotCapabilities
+            restrictingTo: capabilities
         )
+    }
+}
+
+/// Build-time inputs are independent, immutable authorities. Parsing them at app composition
+/// prevents a partially configured signup from reaching a different socket or publication host.
+/// This validates configuration only; it is neither live service evidence nor account readiness.
+public struct BConnectedDMAlphaConfiguration {
+    /// UI scope indicator only. Startup still validates every endpoint and trust input below.
+    public static var isForegroundTextAlphaScope: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "BConnectedPilotScope") as? String == "foreground-text-dm-v1"
+    }
+
+    let messaging: BConnectedOwnedTransportConfiguration
+    let enrollment: BConnectedEnrollmentEndpoint
+    let community: BConnectedEnrollmentEndpoint
+    let publication: BConnectedPublicationConfiguration
+
+    public init(info: [String: Any], userAgent: String) throws {
+        guard info["BConnectedPilotScope"] as? String == "foreground-text-dm-v1" else {
+            throw BConnectedTransportError.invalidOwnedConfiguration
+        }
+        do {
+            messaging = try BConnectedOwnedTransportConfiguration(info: info, userAgent: userAgent)
+            guard let enrollmentString = info["BConnectedEnrollmentOrigin"] as? String,
+                  let enrollmentURL = URL(string: enrollmentString),
+                  let communityString = info["BConnectedCommunityOrigin"] as? String,
+                  let communityURL = URL(string: communityString) else {
+                throw BConnectedTransportError.invalidOwnedConfiguration
+            }
+            enrollment = try BConnectedEnrollmentEndpoint(origin: enrollmentURL)
+            community = try BConnectedEnrollmentEndpoint(origin: communityURL)
+            publication = try BConnectedPublicationConfiguration(info: info)
+        } catch {
+            // Do not include endpoint or public-authority values in startup errors.
+            throw BConnectedTransportError.invalidOwnedConfiguration
+        }
+    }
+
+    func makeTransport() throws -> any BConnectedChatTransport {
+        try messaging.makeTransport(restrictingTo: BConnectedOwnedTransportConfiguration.foregroundDMCapabilities)
     }
 }
 

@@ -202,6 +202,31 @@ extension TSAccountManagerImpl {
         kvStore.writeValue(material.discoverable, forKey: Keys.isDiscoverableByPhoneNumber, tx: tx)
         // Registration date/notifications are reserved for a later services-ready transition.
     }
+
+    /// Called only after fresh remote DM acceptance and the complete native repeat validation
+    /// in the caller's rollback-on-error SQLCipher transaction. Never update the cache here:
+    /// GRDB completion callbacks can run after explicit rollback, and a crash after commit is
+    /// recovered by loading the committed state on next launch.
+    func releaseBConnectedPendingServices(_ material: BConnectedNativeAccountMaterial, tx: DBWriteTransaction) throws {
+        try validateBConnectedInstallation(material, repeated: true, tx: tx)
+        guard material.manualFetch,
+              kvStore.fetchValue(Date.self, forKey: Keys.registrationDate, tx: tx) == nil,
+              kvStore.fetchValue(Bool.self, forKey: Keys.isDeregisteredOrDelinked, tx: tx) != true,
+              kvStore.fetchValue(Bool.self, forKey: Keys.isTransferInProgress, tx: tx) != true,
+              kvStore.fetchValue(String.self, forKey: Keys.reregistrationPhoneNumber, tx: tx) == nil,
+              kvStore.fetchValue(String.self, forKey: Keys.reregistrationAci, tx: tx) == nil else {
+            throw BConnectedEnrollmentError.immutableConflict
+        }
+        kvStore.writeValue(dateProvider(), forKey: Keys.registrationDate, tx: tx)
+        kvStore.removeValue(forKey: Keys.bconnectedPendingServices, tx: tx)
+    }
+
+    /// Invoke after the release transaction has committed, never from a transaction completion.
+    func publishBConnectedRegistrationAfterCommit() {
+        db.read { tx in _ = reloadAccountState(tx: tx) }
+        NotificationCenter.default.postOnMainThread(name: .localNumberDidChange, object: nil)
+        NotificationCenter.default.postOnMainThread(name: .registrationStateDidChange, object: nil)
+    }
 }
 
 extension TSAccountManagerImpl: LocalIdentifiersSetter {

@@ -913,6 +913,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
         // * Delete Voice Note button: when there's a voice note draft.
         // * No control: when there's voice note recording in progress.
         let leadingEdgeControlState: LeadingEdgeControlState = {
+            if !DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) { return .none }
             if isShowingVoiceMemoUI {
                 return voiceMemoRecordingState == .draft ? .deleteVoiceMemoDraft : .none
             }
@@ -971,7 +972,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
         // On iOS 26 there would be no right edge controls.
         // On iOS 15-18 there would be Camera and Mic buttons.
         else {
-            rightEdgeControlsState = .default
+            rightEdgeControlsState = DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) ? .default : .hiddenSendButton
         }
 
         //
@@ -982,7 +983,8 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
         // text input contains newlines (that increases text box's height).
         // On iOS 26 there are Camera and Voice Note buttons inside of the text input field:
         // those would be hidden to match pre-iOS 26 behavior.
-        let hideAllTextFieldButtons = rightEdgeControlsState != .default || inputTextView.untrimmedText.rangeOfCharacter(from: .newlines) != nil
+        let hideAllTextFieldButtons = !DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn)
+            || rightEdgeControlsState != .default || inputTextView.untrimmedText.rangeOfCharacter(from: .newlines) != nil
         // Sticker/keyboard buttons will also be hidden if there's whitespace-only input.
         let textFieldHasAnyInput = !inputTextView.untrimmedText.isEmpty
         let hideInputMethodButtons = hideAllTextFieldButtons || textFieldHasAnyInput || hasQuotedMessage
@@ -2076,11 +2078,13 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
 
     var linkPreviewDraft: OWSLinkPreviewDraft? {
         AssertIsOnMainThread()
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return nil }
 
         return linkPreviewFetchState.linkPreviewDraftIfLoaded
     }
 
     private func updateInputLinkPreview() {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         AssertIsOnMainThread()
 
         let messageBody = messageBodyForSending
@@ -2327,6 +2331,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
     }
 
     private func updateSuggestedStickers(animated: Bool) {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         // Skip this until we are in the view hierarchy.
         guard superview != nil else { return }
 
@@ -3045,6 +3050,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
 
     func showStickerKeyboard() {
         AssertIsOnMainThread()
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         guard desiredKeyboardType != .sticker else { return }
         toggleKeyboardType(.sticker, animated: false)
     }
@@ -3062,6 +3068,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
 
     func showAttachmentKeyboard() {
         AssertIsOnMainThread()
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         guard desiredKeyboardType != .attachment else { return }
         toggleKeyboardType(.attachment, animated: false)
     }
@@ -3235,6 +3242,7 @@ public class ConversationInputToolbar: UIView, QuotedReplyPreviewDelegate {
 extension ConversationInputToolbar {
 
     private func cameraButtonPressed() {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         guard let inputToolbarDelegate else {
             owsFailDebug("inputToolbarDelegate == nil")
             return
@@ -3244,6 +3252,7 @@ extension ConversationInputToolbar {
     }
 
     private func addOrCancelButtonPressed() {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) || isEditingMessage else { return }
         ImpactHapticFeedback.impactOccurred(style: .light)
         if isEditingMessage {
             editTarget = nil
@@ -3276,6 +3285,7 @@ extension ConversationInputToolbar {
     }
 
     private func stickerButtonPressed() {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         ImpactHapticFeedback.impactOccurred(style: .light)
 
         var hasInstalledStickerPacks: Bool = false

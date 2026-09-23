@@ -29,6 +29,18 @@ public struct BConnectedNativeAccountInstaller {
             acknowledge: acknowledge, preKeyStore: protocolStores.preKeyStore, tx: tx)
     }
 
+    func releasePendingServices(record: BConnectedEnrollmentRecord, tx: DBWriteTransaction) throws {
+        guard let account = record.installedAccount,
+              let request = try? BConnectedEnrollmentWire.object(record.registrationRequest),
+              request["apnToken"] == nil else { throw BConnectedEnrollmentError.immutableConflict }
+        let material = try BConnectedNativeAccountMaterial(record: record, account: account)
+        try accountManager.releaseBConnectedPendingServices(material, tx: tx)
+    }
+
+    func publishRegistrationAfterCommit() {
+        accountManager.publishBConnectedRegistrationAfterCommit()
+    }
+
     /// All parsing and validation precede the returned nonthrowing mutation closure. Callers must
     /// serialize the final enrollment receipt first and run both writes in the same SQLCipher tx.
     func prepare(record: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account,

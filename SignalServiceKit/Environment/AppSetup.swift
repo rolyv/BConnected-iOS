@@ -231,10 +231,9 @@ extension AppSetup.GlobalsContinuation {
         )
         #else
         do {
-            // Validate the separately supplied cryptographic authority before constructing any
-            // owned chat transport. TLS certificates are never sender-certificate trust roots.
-            _ = try TSConstants.loadOwnedCryptographicConfiguration()
-            let owned = try BConnectedOwnedTransportConfiguration(
+            // Parse every independently supplied DM-alpha authority before constructing the
+            // socket. Publication validates the native public cryptographic inputs as well.
+            let owned = try BConnectedDMAlphaConfiguration(
                 info: Bundle.main.infoDictionary ?? [:],
                 userAgent: HttpHeaders.userAgentHeaderValueSignalIos
             )

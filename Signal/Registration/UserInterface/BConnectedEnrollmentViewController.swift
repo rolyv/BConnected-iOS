@@ -8,8 +8,10 @@ import UIKit
 final class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollmentView> {
     init(initialRegistration: Bool, makeCoordinator: @MainActor (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
          makeCommunity: @escaping @MainActor (BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator,
-         makePreparation: @escaping @MainActor (String) async throws -> BConnectedEnrollmentPreparation) {
-        let model = BConnectedEnrollmentViewModel(initialRegistration: initialRegistration, makeCoordinator: makeCoordinator, makeCommunity: makeCommunity, makePreparation: makePreparation)
+         makePreparation: @escaping @MainActor (String) async throws -> BConnectedEnrollmentPreparation,
+         onCompleted: @escaping @MainActor () -> Void) {
+        let model = BConnectedEnrollmentViewModel(initialRegistration: initialRegistration, makeCoordinator: makeCoordinator,
+            makeCommunity: makeCommunity, makePreparation: makePreparation, onCompleted: onCompleted)
         super.init(rootView: BConnectedEnrollmentView(model: model))
     }
     @available(*, unavailable)
@@ -83,6 +85,9 @@ struct BConnectedEnrollmentView: View {
                     }
                     if model.mayVerifyPublishedAccount {
                         Button("Verify saved account and profile") { model.verifyPublishedAccount() }
+                    }
+                    if model.mayCompleteDMAlpha {
+                        Button("Finish foreground messaging setup") { model.completeDMAlpha() }
                     }
                     if progress.hasOperation { Button("Check status") { model.perform(.status) } }
                 }

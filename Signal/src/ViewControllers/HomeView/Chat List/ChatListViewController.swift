@@ -799,7 +799,9 @@ public class ChatListViewController: OWSViewController, HomeTabViewController {
             "CAMERA_BUTTON_HINT",
             comment: "Accessibility hint describing what you can do with the camera button",
         )
-        rightBarButtonItems.append(camera)
+        if DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) {
+            rightBarButtonItems.append(camera)
+        }
 
         if let proxyButton = viewState.proxyButtonCreator.buildButton() {
             rightBarButtonItems.append(proxyButton)
@@ -817,6 +819,11 @@ public class ChatListViewController: OWSViewController, HomeTabViewController {
         conversationSplitViewController?.selectedConversationViewController?.dismissMessageContextMenu(animated: true)
 
         let viewController = ComposeViewController()
+        if !DependenciesBridge.shared.libsignalNet.capabilities.allows(.phoneContactDiscovery) {
+            let modal = OWSNavigationController(rootViewController: viewController)
+            self.navigationController?.presentFormSheet(modal, animated: true)
+            return
+        }
         SSKEnvironment.shared.contactManagerImplRef.requestSystemContactsOnce { error in
             if let error {
                 Logger.error("Error when requesting contacts: \(error)")
@@ -834,6 +841,7 @@ public class ChatListViewController: OWSViewController, HomeTabViewController {
 
     func showNewGroupView() {
         AssertIsOnMainThread()
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.groups) else { return }
 
         Logger.info("")
 

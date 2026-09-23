@@ -375,6 +375,8 @@ protocol BConnectedEnrollmentPersistence {
     func transitionPublication(expected: BConnectedEnrollmentRecord, step: BConnectedPublicationStep, acknowledge: Bool) throws -> BConnectedEnrollmentRecord
     /// Rechecks completed saved and native state without preparing, replacing or acknowledging it.
     func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord
+    /// Final native validation and pending-barrier release must share one SQLCipher transaction.
+    func completeDMAlpha(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord) throws
     /// Must atomically install the exact saved native keys/account AND its installedAccount receipt.
     func installNativeAccount(expected: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account) throws
 }
@@ -382,6 +384,7 @@ protocol BConnectedEnrollmentPersistence {
 extension BConnectedEnrollmentPersistence {
     var supportsNativeInstallation: Bool { false }
     func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
+    func completeDMAlpha(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord) throws { throw BConnectedEnrollmentError.unavailable }
     func preparePreKeys(configuration: BConnectedPublicationConfiguration) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func transitionPreKeys(expected: BConnectedEnrollmentRecord, identity: BConnectedPreKeyIdentity, acknowledge: Bool) throws -> BConnectedEnrollmentRecord { throw BConnectedEnrollmentError.unavailable }
     func prepareLocalAccount() throws { throw BConnectedEnrollmentError.unavailable }
@@ -402,17 +405,23 @@ public final class BConnectedEnrollmentCoordinator {
     private let publisher: (any BConnectedPublicationSending)?
     private let preKeyPublisher: (any BConnectedPreKeySending)?
     private let acceptanceReader: (any BConnectedAccountAcceptanceReading)?
+    private let dmAlphaConfiguration: BConnectedDMAlphaConfiguration?
     private var inFlight = false
     public var supportsPreKeyPublication: Bool { publicationConfiguration != nil && preKeyPublisher != nil && persistence.supportsNativeInstallation }
     public var supportsAccountPublication: Bool { publicationConfiguration != nil && publisher != nil && persistence.supportsNativeInstallation }
     public var supportsAccountAcceptance: Bool { publicationConfiguration != nil && acceptanceReader != nil && persistence.supportsNativeInstallation }
+    public var supportsDMAlphaCompletion: Bool {
+        dmAlphaConfiguration != nil && publicationConfiguration != nil && acceptanceReader != nil && persistence.supportsNativeInstallation
+    }
 
     init(persistence: any BConnectedEnrollmentPersistence, client: any BConnectedEnrollmentSending,
          publicationConfiguration: BConnectedPublicationConfiguration? = nil, publisher: (any BConnectedPublicationSending)? = nil, preKeyPublisher: (any BConnectedPreKeySending)? = nil,
-         acceptanceReader: (any BConnectedAccountAcceptanceReading)? = nil) {
+         acceptanceReader: (any BConnectedAccountAcceptanceReading)? = nil,
+         dmAlphaConfiguration: BConnectedDMAlphaConfiguration? = nil) {
         self.persistence = persistence; self.client = client
         self.publicationConfiguration = publicationConfiguration; self.publisher = publisher; self.preKeyPublisher = preKeyPublisher
         self.acceptanceReader = acceptanceReader
+        self.dmAlphaConfiguration = dmAlphaConfiguration
     }
 
     /// First call commits secrets and public request; subsequent calls reuse them, including original metadata.
@@ -533,6 +542,26 @@ public final class BConnectedEnrollmentCoordinator {
         guard let configuration = publicationConfiguration, let acceptanceReader,
               persistence.supportsNativeInstallation else { throw BConnectedEnrollmentError.unavailable }
         inFlight = true; defer { inFlight = false }
+        _ = try await verifyPublishedAccountUnlocked(configuration: configuration, acceptanceReader: acceptanceReader)
+    }
+
+    /// A fresh explicit action performs the same remote readback, then a final native and
+    /// journal recheck in one transaction. No acceptance receipt is persisted for later reuse.
+    public func completeDMAlpha() async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard let dmAlphaConfiguration, let configuration = publicationConfiguration,
+              let acceptanceReader, persistence.supportsNativeInstallation,
+              dmAlphaConfiguration.publication.hash == configuration.hash else {
+            throw BConnectedEnrollmentError.unavailable
+        }
+        inFlight = true; defer { inFlight = false }
+        let accepted = try await verifyPublishedAccountUnlocked(configuration: configuration, acceptanceReader: acceptanceReader)
+        try Task.checkCancellation()
+        try persistence.completeDMAlpha(configuration: configuration, expected: accepted)
+    }
+
+    private func verifyPublishedAccountUnlocked(configuration: BConnectedPublicationConfiguration,
+        acceptanceReader: any BConnectedAccountAcceptanceReading) async throws -> BConnectedEnrollmentRecord {
         try Task.checkCancellation()
         // Incomplete/legacy journals must fail before any request or potential preparation.
         var beforeStatus = try persistence.validateAccountAcceptance(configuration: configuration, expected: nil)
@@ -548,7 +577,7 @@ public final class BConnectedEnrollmentCoordinator {
             try Task.checkCancellation()
             _ = try persistence.validateAccountAcceptance(configuration: configuration, expected: original)
         }
-        // No registration state, credentials, callbacks, keys or service readiness are changed.
+        return original
     }
 
     /// A persisted active observation is not authorization to install. Always fetch fresh status.

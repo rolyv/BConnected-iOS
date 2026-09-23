@@ -207,8 +207,10 @@ class HomeTabBarController: UITabBarController {
     }
 
     private func tabsToShow(areStoriesEnabled: Bool) -> [Tabs] {
-        var tabs = [Tabs.chatList, Tabs.calls]
-        if areStoriesEnabled {
+        let capabilities = DependenciesBridge.shared.libsignalNet.capabilities
+        var tabs = [Tabs.chatList]
+        if capabilities.allows(.calls) { tabs.append(.calls) }
+        if areStoriesEnabled && capabilities.allows(.stories) {
             tabs.append(Tabs.stories)
         }
         return tabs
@@ -298,8 +300,10 @@ extension HomeTabBarController: BadgeObserver {
         if #available(iOS 18, *), UIDevice.current.isIPad {
             uiTab(for: .chatList).badgeValue = stringify(badgeCount.unreadChatCount)
             uiTab(for: .chatList).accessibilityValue = stringify(badgeCount.unreadChatCount)
-            uiTab(for: .calls).badgeValue = stringify(badgeCount.unreadCallsCount)
-            uiTab(for: .calls).accessibilityValue = stringify(badgeCount.unreadCallsCount)
+            if DependenciesBridge.shared.libsignalNet.capabilities.allows(.calls) {
+                uiTab(for: .calls).badgeValue = stringify(badgeCount.unreadCallsCount)
+                uiTab(for: .calls).accessibilityValue = stringify(badgeCount.unreadCallsCount)
+            }
         } else {
             chatListTabBarItem.badgeValue = stringify(badgeCount.unreadChatCount)
             chatListTabBarItem.accessibilityValue = stringify(badgeCount.unreadChatCount)
@@ -316,6 +320,7 @@ extension HomeTabBarController: StoryBadgeCountObserver {
     }
 
     func didUpdateStoryBadge(_ badge: String?) {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.stories) else { return }
         if #available(iOS 18, *), UIDevice.current.isIPad {
             uiTab(for: .stories).badgeValue = badge
         } else {

@@ -8,7 +8,7 @@ import XCTest
 
 final class BConnectedChatTransportTest: XCTestCase {
     private typealias Capability = BConnectedTransportCapability
-    private let chatOnly: Set<Capability> = [.authenticatedChat, .unauthenticatedChat, .provisioning, .chatPreconnect, .networkChange]
+    private let chatOnly: Set<Capability> = [.authenticatedChat, .unauthenticatedChat, .provisioning, .chatPreconnect, .networkChange, .stories]
 
     func testChatOnlyPolicyExcludesEveryUnimplementedService() {
         let policy = BConnectedTransportCapabilities.chatOnly

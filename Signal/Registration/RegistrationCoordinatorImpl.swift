@@ -40,9 +40,11 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
     /// calling this; creating it neither enables legacy registration nor completes the local account.
     @MainActor
     public func makeBConnectedEnrollmentCoordinator(endpoint: BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator {
-        BConnectedEnrollmentCoordinator(db: deps.db, endpoint: endpoint, nativeInstaller: deps.bconnectedNativeInstaller, accountKeyStore: deps.accountKeyStore,
-            publicationConfiguration: try? BConnectedPublicationConfiguration(info: Bundle.main.infoDictionary ?? [:]),
-            udManager: SSKEnvironment.shared.udManagerRef)
+        let info = Bundle.main.infoDictionary ?? [:]
+        return BConnectedEnrollmentCoordinator(db: deps.db, endpoint: endpoint, nativeInstaller: deps.bconnectedNativeInstaller, accountKeyStore: deps.accountKeyStore,
+            publicationConfiguration: try? BConnectedPublicationConfiguration(info: info),
+            udManager: SSKEnvironment.shared.udManagerRef,
+            dmAlphaConfiguration: try? BConnectedDMAlphaConfiguration(info: info, userAgent: OWSURLSession.userAgentHeaderValueSignalIos))
     }
 
     @MainActor
@@ -54,12 +56,9 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
     public func prepareBConnectedEnrollment(phone: String) async throws -> BConnectedEnrollmentPreparation {
         guard case .registering = mode else { throw BConnectedEnrollmentError.unavailable }
         guard E164(phone) != nil else { throw BConnectedEnrollmentError.invalidInput }
-        let apns: String?
-        switch await fetchApnRegistrationId() {
-        case .success(let token): apns = token.apnsToken
-        case .pushUnsupported: apns = nil
-        case .timeout, .genericError: throw BConnectedEnrollmentError.unavailable
-        }
+        // Foreground DM alpha uses explicit manual fetch. Push registration and offline
+        // delivery belong to a later separately reviewed capability.
+        let apns: String? = nil
         let accessKey: Data = try db.writeWithRollbackIfThrows { tx in
             let profile = OWSUserProfile.getOrBuildUserProfileForLocalUser(userProfileWriter: .registration, tx: tx)
             guard let key = profile.profileKey else { throw BConnectedEnrollmentError.persistenceUnavailable }
@@ -136,6 +135,12 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
         }
 
         #if !BCONNECTED_LEGACY_TRANSPORT
+        let isReady = deps.db.read { tx in
+            deps.tsAccountManager.registrationState(tx: tx).isRegisteredPrimaryDevice
+        }
+        if isReady {
+            return .done
+        }
         // The upstream restore path can contact legacy session/SVR services. Owned enrollment
         // must resolve its own durable state before any such effects, including on restart.
         switch mode {

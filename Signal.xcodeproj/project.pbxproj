@@ -18,7 +18,9 @@
 		BC0E02000000000000000005 /* mobile-enrollment-v1-invalid.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */; };
 		BC0E02000000000000000003 /* mobile-enrollment-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000004 /* mobile-enrollment-v1.json */; };
 		BC0E02000000000000000001 /* BConnectedEnrollmentTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */; };
+		BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */; };
 		BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */; };
+		BC0E09000000000000000001 /* BConnectedRecipientLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E09000000000000000002 /* BConnectedRecipientLookup.swift */; };
 		BC0E05000000000000000001 /* BConnectedNativeAccountInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */; };
 		BC0E06000000000000000001 /* BConnectedLocalAccountSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */; };
 		BC0E07000000000000000001 /* BConnectedPreKeySetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E07000000000000000002 /* BConnectedPreKeySetup.swift */; };
@@ -4307,7 +4309,9 @@
 		BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1-invalid.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000004 /* mobile-enrollment-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BConnectedEnrollmentTest.swift"; sourceTree = "<group>"; };
+		BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecipientLookupTest.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentStore.swift; sourceTree = "<group>"; };
+		BC0E09000000000000000002 /* BConnectedRecipientLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecipientLookup.swift; sourceTree = "<group>"; };
 		BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedNativeAccountInstaller.swift; sourceTree = "<group>"; };
 		BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedLocalAccountSetup.swift; sourceTree = "<group>"; };
 		BC0E07000000000000000002 /* BConnectedPreKeySetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedPreKeySetup.swift; sourceTree = "<group>"; };
@@ -10370,6 +10374,7 @@
 				BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */,
 				BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */,
 				BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */,
+				BC0E09000000000000000002 /* BConnectedRecipientLookup.swift */,
 				BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */,
 				BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */,
 				BC0E07000000000000000002 /* BConnectedPreKeySetup.swift */,
@@ -10387,6 +10392,7 @@
 			children = (
 				6600F366298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift */,
 				BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */,
+				BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */,
 				BC0E02000000000000000004 /* mobile-enrollment-v1.json */,
 				BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */,
 				BC0E02000000000000000008 /* mobile-enrollment-v1-responses.json */,
@@ -20373,6 +20379,7 @@
 				BC0E01000000000000000003 /* BConnectedEnrollmentState.swift in Sources */,
 				BC0E01000000000000000005 /* BConnectedEnrollmentClient.swift in Sources */,
 				BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */,
+				BC0E09000000000000000001 /* BConnectedRecipientLookup.swift in Sources */,
 				BC0E05000000000000000001 /* BConnectedNativeAccountInstaller.swift in Sources */,
 				BC0E06000000000000000001 /* BConnectedLocalAccountSetup.swift in Sources */,
 				BC0E07000000000000000001 /* BConnectedPreKeySetup.swift in Sources */,
@@ -20907,6 +20914,7 @@
 				6600F351298C8BC900B1EDB7 /* RegistrationRequestFactoryTest.swift in Sources */,
 				6600F367298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift in Sources */,
 				BC0E02000000000000000001 /* BConnectedEnrollmentTest.swift in Sources */,
+		BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */,
 				BC0C01000000000000000003 /* BConnectedRegistrationKeyCommitmentTest.swift in Sources */,
 				F9426259289B1B5500460798 /* RemoteConfigManagerTests.swift in Sources */,
 				F945FE4D298481EA00C835C7 /* RingrtcFieldTrialsTest.swift in Sources */,
@@ -21247,7 +21255,8 @@
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CODE_SIGN_ENTITLEMENTS = SignalNSE/SignalNSE.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = SignalNSE/SignalNSE.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -21297,7 +21306,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = "SignalNSE/SignalNSE-AppStore.entitlements";
+				BCONNECTED_SELECTED_ENTITLEMENTS = "SignalNSE/SignalNSE-AppStore.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -21353,7 +21363,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = SignalNSE/SignalNSE.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = SignalNSE/SignalNSE.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -21409,7 +21420,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = SignalNSE/SignalNSE.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = SignalNSE/SignalNSE.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -21902,7 +21914,8 @@
 				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
 				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CODE_SIGN_ENTITLEMENTS = SignalShareExtension/SignalShareExtension.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = SignalShareExtension/SignalShareExtension.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
@@ -21952,7 +21965,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = "SignalShareExtension/SignalShareExtension-AppStore.entitlements";
+				BCONNECTED_SELECTED_ENTITLEMENTS = "SignalShareExtension/SignalShareExtension-AppStore.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
@@ -22103,7 +22117,8 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ADDRESS_SANITIZER_CONTAINER_OVERFLOW = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Signal/Signal.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = Signal/Signal.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -22216,7 +22231,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = SignalShareExtension/SignalShareExtension.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = SignalShareExtension/SignalShareExtension.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
@@ -22364,7 +22380,8 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ADDRESS_SANITIZER_CONTAINER_OVERFLOW = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = Signal/Signal.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = Signal/Signal.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_SOURCE_FILE_NAMES[arch=*]" = Signal/test/Assets/input_video.mp4;
@@ -22477,7 +22494,8 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				CODE_SIGN_ENTITLEMENTS = SignalShareExtension/SignalShareExtension.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = SignalShareExtension/SignalShareExtension.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				FRAMEWORK_SEARCH_PATHS = "$(inherited)";
@@ -22734,7 +22752,8 @@
 				CLANG_ADDRESS_SANITIZER_CONTAINER_OVERFLOW = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_UNDEFINED_BEHAVIOR_SANITIZER_INTEGER = YES;
-				CODE_SIGN_ENTITLEMENTS = Signal/Signal.entitlements;
+				BCONNECTED_SELECTED_ENTITLEMENTS = Signal/Signal.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
@@ -22775,7 +22794,8 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CLANG_ADDRESS_SANITIZER_CONTAINER_OVERFLOW = NO;
 				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = "Signal/Signal-AppStore.entitlements";
+				BCONNECTED_SELECTED_ENTITLEMENTS = "Signal/Signal-AppStore.entitlements";
+				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_SOURCE_FILE_NAMES[arch=*]" = Signal/test/Assets/input_video.mp4;

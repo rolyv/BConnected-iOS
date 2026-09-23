@@ -94,4 +94,39 @@ db.write { tx in
     precondition(kyberStore.allocatePreKeyIds(count: 1, tx: tx).lowerBound != kyber.id)
 }
 print("PASS next key allocations preserve committed enrollment keys")
-print("4 native database probes passed; no app lifecycle or provider effects")
+
+// This exercises only the final account-state primitive. The production coordinator must first
+// obtain fresh status and account/profile readback and validate the full saved/native journal.
+do {
+    try db.writeWithRollbackIfThrows { tx in
+        try accountManager.releaseBConnectedPendingServices(material, tx: tx)
+        throw Injected.rollback
+    }
+} catch Injected.rollback {}
+db.read { tx in
+    hidden(accountManager, tx: tx)
+    hidden(manager(), tx: tx)
+    precondition(receipt.getData("attempt", transaction: tx) == frozen)
+}
+print("PASS rolled-back DM account release preserves pending barrier, credentials and journal")
+
+try db.writeWithRollbackIfThrows { tx in
+    try accountManager.releaseBConnectedPendingServices(material, tx: tx)
+    precondition(receipt.getData("attempt", transaction: tx) == frozen)
+}
+accountManager.publishBConnectedRegistrationAfterCommit()
+db.read { tx in
+    for reader in [accountManager, manager()] {
+        precondition(reader.registrationState(tx: tx).isRegisteredPrimaryDevice)
+        precondition(reader.localIdentifiers(tx: tx)?.aci == material.aci)
+        precondition(reader.storedServerAuthToken(tx: tx) == material.password)
+        precondition(reader.registrationDate(tx: tx) != nil)
+    }
+    precondition(receipt.getData("attempt", transaction: tx) == frozen)
+}
+do {
+    try db.writeWithRollbackIfThrows { try accountManager.releaseBConnectedPendingServices(material, tx: $0) }
+    preconditionFailure("DM release repeated")
+} catch BConnectedEnrollmentError.immutableConflict {}
+print("PASS committed DM account release exposes exact saved primary credentials after cache refresh; no journal rewrite or repeat")
+print("6 native database probes passed; no remote acceptance or device lifecycle effects")

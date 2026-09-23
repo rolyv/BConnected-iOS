@@ -1099,7 +1099,7 @@ class OWSAuthConnectionUsingLibSignal: OWSChatConnectionUsingLibSignal<Authentic
                 // Preserve legacy behavior; the owned transport validates missing credentials.
                 return (
                     username: username ?? "", password: password ?? "",
-                    receiveStories: StoryManager.areStoriesEnabled,
+                    receiveStories: StoryManager.areStoriesEnabled && self.libsignalNet.capabilities.allows(.stories),
                     languages: Array(HttpHeaders.topPreferredLanguages())
                 )
             }

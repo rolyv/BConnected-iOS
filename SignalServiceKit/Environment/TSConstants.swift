@@ -106,6 +106,23 @@ public class TSConstants {
         catch { owsFail("BConnected owned group parameters or sender-certificate trust roots are unavailable.") }
     }()
 
+    /// Direct HTTP consumers use the explicitly configured owned REST origin. They must
+    /// never inherit Signal's main-service URL when the native socket is unavailable.
+    fileprivate static var ownedMainServiceURL: String {
+        do {
+            return try BConnectedDMAlphaConfiguration(
+                info: Bundle.main.infoDictionary ?? [:],
+                userAgent: HttpHeaders.userAgentHeaderValueSignalIos
+            ).publication.origin.absoluteString
+        } catch {
+            owsFail("BConnected owned REST origin is unavailable.")
+        }
+    }
+
+    fileprivate static let unavailableHTTPSURL = "https://unavailable.invalid"
+    fileprivate static let unavailableWSSURL = "wss://unavailable.invalid"
+    fileprivate static let unavailableHost = "unavailable.invalid"
+
     public static let shared: TSConstantsProtocol = {
         switch environment {
         case .production:
@@ -185,6 +202,7 @@ public class TSConstantsProduction: TSConstantsProtocol {
 
     public init() {}
 
+#if BCONNECTED_LEGACY_TRANSPORT
     public let mainServiceURL = "https://chat.signal.org"
     public let textSecureCDN0ServerURL = "https://cdn.signal.org"
     public let textSecureCDN2ServerURL = "https://cdn2.signal.org"
@@ -195,16 +213,36 @@ public class TSConstantsProduction: TSConstantsProtocol {
     public let svr2URL = "wss://svr2.signal.org"
     public let registrationCaptchaURL = "https://signalcaptchas.org/registration/generate.html"
     public let challengeCaptchaURL = "https://signalcaptchas.org/challenge/generate.html"
+#else
+    public var mainServiceURL: String { TSConstants.ownedMainServiceURL }
+    public let textSecureCDN0ServerURL = TSConstants.unavailableHTTPSURL
+    public let textSecureCDN2ServerURL = TSConstants.unavailableHTTPSURL
+    public let textSecureCDN3ServerURL = TSConstants.unavailableHTTPSURL
+    public let storageServiceURL = TSConstants.unavailableHTTPSURL
+    public let sfuURL = TSConstants.unavailableHTTPSURL
+    public let sfuTestURL = TSConstants.unavailableHTTPSURL
+    public let svr2URL = TSConstants.unavailableWSSURL
+    public let registrationCaptchaURL = TSConstants.unavailableHTTPSURL
+    public let challengeCaptchaURL = TSConstants.unavailableHTTPSURL
+#endif
 #if BCONNECTED_LEGACY_TRANSPORT
     public let kUDTrustRoots = ["BXu6QIKVz5MA8gstzfOgRQGqyLqOwNKHL6INkv3IHWMF", "BUkY0I+9+oPgDCn4+Ac6Iu813yvqkDr/ga8DzLxFxuk6"]
 #else
     public var kUDTrustRoots: [String] { TSConstants.kUDTrustRoots }
 #endif
+#if BCONNECTED_LEGACY_TRANSPORT
     public let updatesURL = "https://updates.signal.org"
     public let updates2URL = "https://updates2.signal.org"
 
     public let censorshipFReflectorHost = "reflector-signal.global.ssl.fastly.net"
     public let censorshipGReflectorHost = "reflector-nrgwuv7kwq-uc.a.run.app"
+
+#else
+    public let updatesURL = TSConstants.unavailableHTTPSURL
+    public let updates2URL = TSConstants.unavailableHTTPSURL
+    public let censorshipFReflectorHost = TSConstants.unavailableHost
+    public let censorshipGReflectorHost = TSConstants.unavailableHost
+#endif
 
     public let serviceCensorshipPrefix = "service"
     public let cdn0CensorshipPrefix = "cdn"
@@ -249,6 +287,7 @@ public class TSConstantsStaging: TSConstantsProtocol {
 
     public init() {}
 
+#if BCONNECTED_LEGACY_TRANSPORT
     public let mainServiceURL = "https://chat.staging.signal.org"
     public let textSecureCDN0ServerURL = "https://cdn-staging.signal.org"
     public let textSecureCDN2ServerURL = "https://cdn2-staging.signal.org"
@@ -260,17 +299,37 @@ public class TSConstantsStaging: TSConstantsProtocol {
     public let challengeCaptchaURL = "https://signalcaptchas.org/staging/challenge/generate.html"
     // There's no separate test SFU for staging.
     public let sfuTestURL = "https://sfu.test.voip.signal.org"
+#else
+    public var mainServiceURL: String { TSConstants.ownedMainServiceURL }
+    public let textSecureCDN0ServerURL = TSConstants.unavailableHTTPSURL
+    public let textSecureCDN2ServerURL = TSConstants.unavailableHTTPSURL
+    public let textSecureCDN3ServerURL = TSConstants.unavailableHTTPSURL
+    public let storageServiceURL = TSConstants.unavailableHTTPSURL
+    public let sfuURL = TSConstants.unavailableHTTPSURL
+    public let sfuTestURL = TSConstants.unavailableHTTPSURL
+    public let svr2URL = TSConstants.unavailableWSSURL
+    public let registrationCaptchaURL = TSConstants.unavailableHTTPSURL
+    public let challengeCaptchaURL = TSConstants.unavailableHTTPSURL
+#endif
 #if BCONNECTED_LEGACY_TRANSPORT
     public let kUDTrustRoots = ["BbqY1DzohE4NUZoVF+L18oUPrK3kILllLEJh2UnPSsEx", "BYhU6tPjqP46KGZEzRs1OL4U39V5dlPJ/X09ha4rErkm"]
 #else
     public var kUDTrustRoots: [String] { TSConstants.kUDTrustRoots }
 #endif
     // There's no separate updates endpoint for staging.
+#if BCONNECTED_LEGACY_TRANSPORT
     public let updatesURL = "https://updates.signal.org"
     public let updates2URL = "https://updates2.signal.org"
 
     public let censorshipFReflectorHost = "reflector-staging-signal.global.ssl.fastly.net"
     public let censorshipGReflectorHost = "reflector-nrgwuv7kwq-uc.a.run.app"
+
+#else
+    public let updatesURL = TSConstants.unavailableHTTPSURL
+    public let updates2URL = TSConstants.unavailableHTTPSURL
+    public let censorshipFReflectorHost = TSConstants.unavailableHost
+    public let censorshipGReflectorHost = TSConstants.unavailableHost
+#endif
 
     public let serviceCensorshipPrefix = "service-staging"
     public let cdn0CensorshipPrefix = "cdn-staging"

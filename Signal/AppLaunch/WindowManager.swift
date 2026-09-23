@@ -82,6 +82,15 @@ class WindowManager {
         }
     }
 
+    func attachWindows(to scene: UIWindowScene) {
+        guard let rootWindow, let screenBlockingWindow else { return }
+        for window in [rootWindow, screenBlockingWindow, returnToCallWindow, callViewWindow, clockSkewBlockingWindow] {
+            window.windowScene = scene
+            window.frame = scene.coordinateSpace.bounds
+        }
+        ensureWindowState()
+    }
+
     // MARK: Windows
 
     // UIWindow.Level.normal
@@ -95,6 +104,7 @@ class WindowManager {
         }
 
         let window = OWSWindow(frame: rootWindow.bounds)
+        window.windowScene = rootWindow.windowScene
         window.windowLevel = ._returnToCall
         window.isHidden = true
         window.isOpaque = true
@@ -114,6 +124,7 @@ class WindowManager {
         }
 
         let window = OWSWindow(frame: rootWindow.bounds)
+        window.windowScene = rootWindow.windowScene
         window.windowLevel = ._callView
         window.isHidden = true
         window.isOpaque = true
@@ -146,6 +157,7 @@ class WindowManager {
         }
 
         let window = OWSWindow(frame: rootWindow.bounds)
+        window.windowScene = rootWindow.windowScene
         window.windowLevel = ._clockSkewBlocking
         window.isHidden = true
         window.isOpaque = true
@@ -170,6 +182,9 @@ class WindowManager {
 
     private func ensureWindowState() {
         AssertIsOnMainThread()
+        // UIKit connects the scene after process initialization. Do not present an
+        // unattached window, or reveal the root ahead of its privacy overlay.
+        guard rootWindow?.windowScene != nil else { return }
 
         // To avoid bad frames, we never want to hide the blocking window, so we manipulate
         // its window level to "hide" it behind other windows.  The other windows have fixed

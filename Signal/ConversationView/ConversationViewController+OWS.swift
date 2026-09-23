@@ -52,6 +52,7 @@ extension ConversationViewController {
     }
 
     public static func canCall(threadViewModel: ThreadViewModel) -> Bool {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.calls) else { return false }
         if threadViewModel.hasPendingMessageRequest {
             return false
         }

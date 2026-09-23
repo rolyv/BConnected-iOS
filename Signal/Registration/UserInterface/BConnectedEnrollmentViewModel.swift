@@ -17,14 +17,17 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     @Published private(set) var communityProgress: BConnectedCommunityProgress?
     private var community: BConnectedCommunityEnrollmentCoordinator?
     private let makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)?
+    private let onCompleted: @MainActor () -> Void
     private let initialRegistration: Bool
     private var coordinator: BConnectedEnrollmentCoordinator?
 
     init(info: [String: Any] = Bundle.main.infoDictionary ?? [:], initialRegistration: Bool = true,
          makeCoordinator: (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
          makeCommunity: ((BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator)? = nil,
-         makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)? = nil) {
+         makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)? = nil,
+         onCompleted: @escaping @MainActor () -> Void = {}) {
         self.makePreparation = makePreparation
+        self.onCompleted = onCompleted
         self.initialRegistration = initialRegistration
         guard initialRegistration else {
             message = "Account recovery, phone changes, and linked devices are not available in this pilot. Contact the alumni administrator."
@@ -67,6 +70,10 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         coordinator?.supportsAccountAcceptance == true && memberAllowsVerification && progress?.lastObservation?.state == .active
             && progress?.accountPublicationComplete == true && progress?.preKeyPublicationComplete == true
             && progress?.preKeyPublicationBlocked != true
+    }
+
+    var mayCompleteDMAlpha: Bool {
+        mayVerifyPublishedAccount && coordinator?.supportsDMAlphaCompletion == true
     }
 
     var title: String {
@@ -223,6 +230,22 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             } catch { message = "The saved account and profile could not be verified. Your setup has been kept. Check status before trying again." }
             do { progress = try coordinator.progress() }
             catch { message = "Saved signup state could not be read. No new attempt will be created." }
+        }
+    }
+
+    func completeDMAlpha() {
+        guard !busy, mayCompleteDMAlpha, let coordinator else { return }
+        busy = true; message = nil
+        Task { @MainActor in
+            defer { busy = false }
+            do {
+                try await coordinator.completeDMAlpha()
+                onCompleted()
+            } catch {
+                message = "Foreground messaging could not be confirmed. The saved account and keys are unchanged. Check status before trying again."
+                do { progress = try coordinator.progress() }
+                catch { message = "Saved signup state could not be read. No new attempt will be created." }
+            }
         }
     }
 

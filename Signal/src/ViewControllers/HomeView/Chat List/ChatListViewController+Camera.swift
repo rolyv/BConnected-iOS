@@ -13,6 +13,7 @@ extension ChatListViewController: CameraFirstCaptureDelegate {
     }
 
     func presentCameraView(completion: ((UINavigationController) -> Void)? = nil) {
+        guard DependenciesBridge.shared.libsignalNet.capabilities.allows(.legacyCdn) else { return }
         // Dismiss any message actions if they're presented
         conversationSplitViewController?.selectedConversationViewController?.dismissMessageContextMenu(animated: true)
 

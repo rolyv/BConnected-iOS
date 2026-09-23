@@ -2,6 +2,28 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BConnectedAccountPublicationOrigin</key>
+	<string>$(BCONNECTED_ACCOUNT_PUBLICATION_ORIGIN)</string>
+	<key>BConnectedAccountPublicationTrust</key>
+	<string>$(BCONNECTED_ACCOUNT_PUBLICATION_TRUST)</string>
+	<key>BConnectedCommunityOrigin</key>
+	<string>$(BCONNECTED_COMMUNITY_ORIGIN)</string>
+	<key>BConnectedEnrollmentOrigin</key>
+	<string>$(BCONNECTED_ENROLLMENT_ORIGIN)</string>
+	<key>BConnectedGroupPublicParamsBase64</key>
+	<string>$(BCONNECTED_GROUP_PUBLIC_PARAMS_BASE64)</string>
+	<key>BConnectedMessagingHost</key>
+	<string>$(BCONNECTED_MESSAGING_HOST)</string>
+	<key>BConnectedMessagingPort</key>
+	<string>$(BCONNECTED_MESSAGING_PORT)</string>
+	<key>BConnectedMessagingTrust</key>
+	<string>$(BCONNECTED_MESSAGING_TRUST)</string>
+	<key>BConnectedPilotScope</key>
+	<string>$(BCONNECTED_PILOT_SCOPE)</string>
+	<key>BConnectedSenderCertificateTrustRootsBase64</key>
+	<array>
+		<string>$(BCONNECTED_SENDER_ROOT_BASE64)</string>
+	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>LocalFileBackupBGProcessingTaskRunner</string>
@@ -109,6 +131,21 @@
 	<string>$(SIGNAL_MERCHANTID)</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneDelegateClassName</key>
+					<string>BConnectedSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

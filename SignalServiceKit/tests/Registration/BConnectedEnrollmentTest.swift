@@ -35,10 +35,10 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    private func publicationFixture() async throws -> (MemoryStore, Sender, PublicationSender, BConnectedEnrollmentCoordinator) {
+    private func publicationFixture(configuration supplied: BConnectedPublicationConfiguration? = nil) async throws -> (MemoryStore, Sender, PublicationSender, BConnectedEnrollmentCoordinator) {
         let store = MemoryStore(), sender = Sender(), publisher = PublicationSender()
         store.supportsNativeInstallation = true
-        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let configuration = try supplied ?? BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: configuration, publisher: publisher)
         _ = try coordinator.prepare(input()); try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
         sender.result = try observation("active"); _ = try await coordinator.perform(.begin)
@@ -48,24 +48,62 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    private func preKeyFixture() async throws -> (MemoryStore, Sender, PreKeySender, BConnectedEnrollmentCoordinator, BConnectedPublicationConfiguration) {
-        let (store, sender, _, initial) = try await publicationFixture()
+    private func preKeyFixture(configuration supplied: BConnectedPublicationConfiguration? = nil) async throws -> (MemoryStore, Sender, PreKeySender, BConnectedEnrollmentCoordinator, BConnectedPublicationConfiguration) {
+        let (store, sender, _, initial) = try await publicationFixture(configuration: supplied)
         try await initial.publishAccount()
-        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let configuration = try supplied ?? BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let publisher = PreKeySender()
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: configuration, preKeyPublisher: publisher)
         return (store, sender, publisher, coordinator, configuration)
     }
 
     @MainActor
-    private func acceptanceFixture() async throws -> (MemoryStore, Sender, AcceptanceReader, BConnectedEnrollmentCoordinator, BConnectedPublicationConfiguration) {
-        let (store, sender, _, initial, configuration) = try await preKeyFixture()
+    private func acceptanceFixture(configuration supplied: BConnectedPublicationConfiguration? = nil) async throws -> (MemoryStore, Sender, AcceptanceReader, BConnectedEnrollmentCoordinator, BConnectedPublicationConfiguration) {
+        let (store, sender, _, initial, configuration) = try await preKeyFixture(configuration: supplied)
         try await initial.publishPreKeys()
         sender.calls = []
         let reader = AcceptanceReader()
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender,
             publicationConfiguration: configuration, acceptanceReader: reader)
         return (store, sender, reader, coordinator, configuration)
+    }
+
+    private func dmAlphaConfiguration() throws -> BConnectedDMAlphaConfiguration {
+        try BConnectedDMAlphaConfiguration(info: [
+            "BConnectedPilotScope": "foreground-text-dm-v1",
+            "BConnectedMessagingHost": "chat.example.invalid", "BConnectedMessagingPort": "443", "BConnectedMessagingTrust": "system",
+            "BConnectedEnrollmentOrigin": "https://enrollment.example.invalid",
+            "BConnectedCommunityOrigin": "https://community.example.invalid",
+            "BConnectedAccountPublicationOrigin": "https://publication.example.invalid", "BConnectedAccountPublicationTrust": "system",
+            "BConnectedGroupPublicParamsBase64": try ServerSecretParams.generate().getPublicParams().serialize().base64EncodedString(),
+            "BConnectedSenderCertificateTrustRootsBase64": [PrivateKey.generate().publicKey.serialize().base64EncodedString()],
+        ], userAgent: "BConnected fixture")
+    }
+
+    @MainActor
+    func testDMAlphaCompletionRequiresFreshStatusBothReadsAndExactFinalSnapshot() async throws {
+        let dm = try dmAlphaConfiguration()
+        let (store, sender, reader, _, configuration) = try await acceptanceFixture(configuration: dm.publication)
+        let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender,
+            publicationConfiguration: configuration, acceptanceReader: reader, dmAlphaConfiguration: dm)
+        XCTAssertTrue(coordinator.supportsDMAlphaCompletion)
+        let original = store.bytes
+        try await coordinator.completeDMAlpha()
+        XCTAssertEqual(sender.calls, [.status]); XCTAssertEqual(reader.steps, [.identity, .profile])
+        XCTAssertEqual(store.completionCount, 1)
+        XCTAssertEqual(store.bytes, original) // No cached acceptance flag or rewritten key journal.
+
+        let (changedStore, changedSender, changedReader, _, changedConfiguration) = try await acceptanceFixture(configuration: dm.publication)
+        changedStore.beforeCompletion = { try changedStore.transaction { $0!.sendNeedsExplicitDecision.toggle() } }
+        let changed = BConnectedEnrollmentCoordinator(persistence: changedStore, client: changedSender,
+            publicationConfiguration: changedConfiguration, acceptanceReader: changedReader, dmAlphaConfiguration: dm)
+        do { try await changed.completeDMAlpha(); XCTFail("Changed saved context completed") } catch {}
+        XCTAssertEqual(changedStore.completionCount, 0)
+
+        let denied = BConnectedEnrollmentCoordinator(persistence: store, client: sender,
+            publicationConfiguration: configuration, acceptanceReader: reader)
+        XCTAssertFalse(denied.supportsDMAlphaCompletion)
+        do { try await denied.completeDMAlpha(); XCTFail("Missing DM configuration completed") } catch {}
     }
 
     @MainActor
@@ -1025,6 +1063,17 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
 }
 
 private final class MemoryStore: BConnectedEnrollmentPersistence {
+    var completionCount = 0
+    var beforeCompletion: (() throws -> Void)?
+    func completeDMAlpha(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord) throws {
+        try beforeCompletion?()
+        _ = try validateAccountAcceptance(configuration: configuration, expected: expected)
+        guard expected.installedAccount != nil,
+              try BConnectedEnrollmentWire.object(expected.registrationRequest)["apnToken"] == nil else {
+            throw BConnectedEnrollmentError.immutableConflict
+        }
+        completionCount += 1
+    }
     var failAcceptanceValidation = false
     func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord {
         if failAcceptanceValidation { throw BConnectedEnrollmentError.persistenceUnavailable }

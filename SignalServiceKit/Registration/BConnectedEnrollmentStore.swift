@@ -19,6 +19,21 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     }
     var supportsNativeInstallation: Bool { nativeInstaller != nil }
 
+    func completeDMAlpha(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord) throws {
+        guard let nativeInstaller, publicationConfiguration?.hash == configuration.hash else {
+            throw BConnectedEnrollmentError.unavailable
+        }
+        try db.writeWithRollbackIfThrows { tx in
+            let validated = try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: configuration,
+                expected: expected, tx: tx) {
+                let current = try preparePublication(configuration: configuration, tx: tx)
+                return try nativeInstaller.preparePreKeys(record: current, configuration: configuration, tx: tx)
+            }
+            try nativeInstaller.releasePendingServices(record: validated, tx: tx)
+        }
+        nativeInstaller.publishRegistrationAfterCommit()
+    }
+
     func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord {
         guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
         return try db.writeWithRollbackIfThrows { tx in
@@ -143,12 +158,16 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
 extension BConnectedEnrollmentCoordinator {
     /// Construction has no network effects and does not mark the upstream registration complete.
     public convenience init(db: any DB, endpoint: BConnectedEnrollmentEndpoint, nativeInstaller: BConnectedNativeAccountInstaller? = nil, accountKeyStore: AccountKeyStore? = nil,
-                            publicationConfiguration: BConnectedPublicationConfiguration? = nil, udManager: OWSUDManager? = nil) {
+                            publicationConfiguration: BConnectedPublicationConfiguration? = nil, udManager: OWSUDManager? = nil,
+                            dmAlphaConfiguration: BConnectedDMAlphaConfiguration? = nil) {
+        let selectedDM = dmAlphaConfiguration.flatMap { $0.enrollment.origin == endpoint.origin ? $0 : nil }
+        let selectedPublication = selectedDM?.publication ?? publicationConfiguration
         self.init(persistence: BConnectedEnrollmentStore(db: db, nativeInstaller: nativeInstaller, accountKeyStore: accountKeyStore,
-                  publicationConfiguration: publicationConfiguration, udManager: udManager), client: BConnectedEnrollmentClient(endpoint: endpoint),
-                  publicationConfiguration: publicationConfiguration, publisher: publicationConfiguration.map { _ in BConnectedPublicationClient() },
-                  preKeyPublisher: publicationConfiguration.map { _ in BConnectedPreKeyClient() },
-                  acceptanceReader: publicationConfiguration.map { _ in BConnectedAccountAcceptanceClient() })
+                  publicationConfiguration: selectedPublication, udManager: udManager), client: BConnectedEnrollmentClient(endpoint: endpoint),
+                  publicationConfiguration: selectedPublication, publisher: selectedPublication.map { _ in BConnectedPublicationClient() },
+                  preKeyPublisher: selectedPublication.map { _ in BConnectedPreKeyClient() },
+                  acceptanceReader: selectedPublication.map { _ in BConnectedAccountAcceptanceClient() },
+                  dmAlphaConfiguration: selectedDM)
     }
 }
 

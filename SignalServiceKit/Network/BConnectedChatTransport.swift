@@ -70,6 +70,7 @@ private final class OwnedTransport: BConnectedChatTransport {
 
     func connectAuthenticatedChat(username: String, password: String, receiveStories: Bool, languages: [String]) async throws -> AuthenticatedChatConnection {
         try capabilities.require(.authenticatedChat)
+        if receiveStories { try capabilities.require(.stories) }
         // The native bridge requires an ACI with an optional device ID (1...127) and
         // treats a malformed username as a programmer error. Validate before entering it.
         // Reject embedded NULs instead of allowing C-string truncation of credentials.

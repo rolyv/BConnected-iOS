@@ -94,6 +94,10 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
                 guard preKeyBundle.devices.map(\.deviceId) == [deviceId] else {
                     throw OWSAssertionError("The server didn't return a bundle for the device we requested.")
                 }
+                #if !BCONNECTED_LEGACY_TRANSPORT
+                guard deviceId == .primary else { throw BConnectedTransportError.unavailable(.provisioning) }
+                self.updateDevices(serviceId: serviceId, deviceIds: [.primary], tx: tx)
+                #endif
             }
             try self._createSessions(
                 for: preKeyBundle,
@@ -594,8 +598,14 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
             throw OWSGenericError("failure toggle is enabled")
         }
         try await waitForPreKeyRotationIfNeeded()
-        let udManager = SSKEnvironment.shared.udManagerRef
-        let senderCertificates = try await udManager.fetchSenderCertificates()
+        let senderCertificates: SenderCertificates?
+        #if BCONNECTED_LEGACY_TRANSPORT
+        senderCertificates = try await SSKEnvironment.shared.udManagerRef.fetchSenderCertificates()
+        #else
+        // This alpha has no anonymous send route. Do not fetch a sender certificate or
+        // try UD first; choose identified Signal encryption before preparing messages.
+        senderCertificates = nil
+        #endif
         let registeredState = try tsAccountManager.registeredStateWithMaybeSneakyTransaction()
         guard let localDeviceId = tsAccountManager.storedDeviceIdWithMaybeTransaction.ifValid else {
             throw OWSGenericError("missing local device id")
@@ -665,7 +675,7 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
             let thread: TSThread
             let fanoutRecipients: Set<ServiceId>
             let sendViaSenderKey: (@Sendable () async -> [(ServiceId, any Error)])?
-            let senderCertificate: SenderCertificate
+            let senderCertificate: SenderCertificate?
             let udAccess: [Aci: OWSUDAccess]
             let endorsements: GroupSendEndorsements?
             let localIdentifiers: LocalIdentifiers
@@ -700,7 +710,7 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
     private func sendPreparedMessage(
         _ message: any SendableMessage,
         recoveryState: OuterRecoveryState,
-        senderCertificates: SenderCertificates,
+        senderCertificates: SenderCertificates?,
         localIdentifiers: LocalIdentifiers,
         localDeviceId: DeviceId,
     ) async throws -> SendPreparedMessageResult {
@@ -750,21 +760,18 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
 
             let serializedMessage = try self.buildAndRecordMessage(message, in: thread, tx: tx)
 
-            let senderCertificate: SenderCertificate = {
+            let senderCertificate: SenderCertificate? = senderCertificates.map { certificates in
                 switch SSKEnvironment.shared.udManagerRef.phoneNumberSharingMode(tx: tx).orDefault {
-                case .everybody:
-                    return senderCertificates.defaultCert
-                case .nobody:
-                    return senderCertificates.uuidOnlyCert
+                case .everybody: return certificates.defaultCert
+                case .nobody: return certificates.uuidOnlyCert
                 }
-            }()
+            }
 
-            let udAccessMap = self.fetchSealedSenderAccess(
-                for: serviceIds.compactMap { $0 as? Aci },
-                senderCertificate: senderCertificate,
-                localIdentifiers: localIdentifiers,
-                tx: tx,
-            )
+            let udAccessMap = senderCertificate.map { certificate in
+                self.fetchSealedSenderAccess(
+                    for: serviceIds.compactMap { $0 as? Aci }, senderCertificate: certificate,
+                    localIdentifiers: localIdentifiers, tx: tx)
+            } ?? [:]
 
             let endorsements: GroupSendEndorsements?
             do {
@@ -787,7 +794,7 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
 
             let senderKeyRecipients: Set<ServiceId>
             let sendViaSenderKey: (@Sendable () async -> [(ServiceId, any Error)])?
-            if thread.usesSenderKey {
+            if thread.usesSenderKey, let senderCertificate {
                 do throws(OWSAssertionError) {
                     guard recoveryState.canUseMultiRecipientSealedSender else {
                         throw OWSAssertionError("Can't use Sender Key because of a prior failure.")
@@ -898,6 +905,10 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
     }
 
     private func checkIfCanSendMessage(_ message: any SendableMessage, toThread thread: TSThread) throws {
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        guard !message.isStorySend else { throw BConnectedTransportError.unavailable(.stories) }
+        guard thread is TSContactThread else { throw BConnectedTransportError.unavailable(.groups) }
+        #endif
         if let thread = thread as? TSGroupThread {
             // We can't send any messages to GV1 threads.
             guard let groupModel = thread.groupModel as? TSGroupModelV2 else {
@@ -936,7 +947,7 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
         in thread: TSThread,
         viaFanoutTo fanoutRecipients: Set<ServiceId>,
         viaSenderKey sendViaSenderKey: (@Sendable () async -> [(ServiceId, any Error)])?,
-        senderCertificate: SenderCertificate,
+        senderCertificate: SenderCertificate?,
         udAccess sendingAccessMap: [Aci: OWSUDAccess],
         endorsements: GroupSendEndorsements?,
         localIdentifiers: LocalIdentifiers,
@@ -964,14 +975,16 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
                     localIdentifiers: localIdentifiers,
                     localDeviceId: localDeviceId,
                 )
-                var sealedSenderParameters = SealedSenderParameters(
-                    message: message,
-                    senderCertificate: senderCertificate,
-                    unidentifiedAccess: (serviceId as? Aci).flatMap({
-                        return SealedSenderParameters.UnidentifiedAccess(aci: $0, value: sendingAccessMap[$0])
-                    }),
-                    endorsement: endorsements?.tokenBuilder(forServiceId: serviceId),
-                )
+                var sealedSenderParameters = senderCertificate.flatMap { certificate in
+                    SealedSenderParameters(
+                        message: message,
+                        senderCertificate: certificate,
+                        unidentifiedAccess: (serviceId as? Aci).flatMap({
+                            SealedSenderParameters.UnidentifiedAccess(aci: $0, value: sendingAccessMap[$0])
+                        }),
+                        endorsement: endorsements?.tokenBuilder(forServiceId: serviceId),
+                    )
+                }
                 if localIdentifiers.contains(serviceId: serviceId) {
                     owsAssertDebug(sealedSenderParameters == nil, "Can't use Sealed Sender for ourselves.")
                     sealedSenderParameters = nil
@@ -1222,6 +1235,12 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
         localIdentifiers: LocalIdentifiers,
         localDeviceId: DeviceId,
     ) async throws {
+        // The foreground DM alpha admits exactly one primary device per account.
+        // A linked-device transcript would be an unsupported sync payload and must
+        // not turn a successfully delivered text message into a send failure.
+        guard !BConnectedDMAlphaConfiguration.isForegroundTextAlphaScope else {
+            return
+        }
         guard message.shouldSyncTranscript() else {
             return
         }
@@ -1314,6 +1333,14 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
         tx: DBWriteTransaction,
     ) throws -> SerializedMessage {
         let plaintextData = try message.buildPlaintextData(inThread: thread, tx: tx)
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        // A hidden media picker is insufficient: paste, share, and queued messages can
+        // all reach this path. Inspect the exact plaintext before encrypting or sending.
+        let content = try SSKProtoContent(serializedData: plaintextData)
+        guard MessageReceiver.isAllowedDMAlphaContent(content) else {
+            throw BConnectedTransportError.unavailable(.legacyCdn)
+        }
+        #endif
         let messageSendLog = SSKEnvironment.shared.messageSendLogRef
         let payloadId = messageSendLog.recordPayload(plaintextData, for: message, tx: tx)
         return SerializedMessage(plaintextData: plaintextData, payloadId: payloadId)
@@ -1374,6 +1401,9 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
                     }
                     return []
                 }
+                #if !BCONNECTED_LEGACY_TRANSPORT
+                throw MessageSenderNoSuchSignalRecipientError()
+                #else
                 if !(messageSend.thread is TSContactThread) {
                     try checkIfAccountExistsUsingCache(serviceId: messageSend.serviceId)
                 }
@@ -1382,6 +1412,7 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
                     messageSend: messageSend,
                     sealedSenderParameters: sealedSenderParameters,
                 )
+                #endif
             }
 
             return try await sendDeviceMessages(
@@ -1537,9 +1568,14 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
             // initial list of devices when contacting someone for the first time.)
             if deviceMessages.isEmpty {
                 do {
+                    #if BCONNECTED_LEGACY_TRANSPORT
+                    let initialDevice: PreKeyDevice = .all
+                    #else
+                    let initialDevice: PreKeyDevice = .specific(.primary)
+                    #endif
                     try await createSession(
                         forServiceId: serviceId,
-                        deviceId: .all,
+                        deviceId: initialDevice,
                         localServiceId: localAci,
                         localDeviceId: localDeviceId,
                         sealedSenderParameters: sealedSenderParameters,
@@ -1964,11 +2000,15 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
     }
 
     private func handle404(serviceId: ServiceId, isSelfSend: Bool) async throws -> Never {
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        throw MessageSenderNoSuchSignalRecipientError()
+        #else
         if !isSelfSend {
             try await checkIfAccountExists(serviceId: serviceId)
         }
         Logger.warn("Server endpoints disagree about registration status for \(serviceId). Backing off and retrying…")
         throw OWSRetryableMessageSenderError()
+        #endif
     }
 
     // MARK: - Unregistered, Missing, & Stale Devices
@@ -2051,11 +2091,16 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
         owsAssertDebug(Set(devicesToAdd).isDisjoint(with: devicesToRemove))
 
         let recipientManager = DependenciesBridge.shared.recipientManager
+        #if BCONNECTED_LEGACY_TRANSPORT
+        let shouldUpdateStorageService = true
+        #else
+        let shouldUpdateStorageService = false
+        #endif
         recipientManager.modifyAndSave(
             &recipient,
             deviceIdsToAdd: devicesToAdd,
             deviceIdsToRemove: devicesToRemove,
-            shouldUpdateStorageService: true,
+            shouldUpdateStorageService: shouldUpdateStorageService,
             tx: tx,
         )
 

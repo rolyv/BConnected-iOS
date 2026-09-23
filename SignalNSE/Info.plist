@@ -2,6 +2,29 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Explicit public DM-alpha inputs. Unset build settings expand to invalid values and startup fails closed. -->
+	<key>BConnectedPilotScope</key>
+	<string>$(BCONNECTED_PILOT_SCOPE)</string>
+	<key>BConnectedMessagingHost</key>
+	<string>$(BCONNECTED_MESSAGING_HOST)</string>
+	<key>BConnectedMessagingPort</key>
+	<string>$(BCONNECTED_MESSAGING_PORT)</string>
+	<key>BConnectedMessagingTrust</key>
+	<string>$(BCONNECTED_MESSAGING_TRUST)</string>
+	<key>BConnectedEnrollmentOrigin</key>
+	<string>$(BCONNECTED_ENROLLMENT_ORIGIN)</string>
+	<key>BConnectedCommunityOrigin</key>
+	<string>$(BCONNECTED_COMMUNITY_ORIGIN)</string>
+	<key>BConnectedAccountPublicationOrigin</key>
+	<string>$(BCONNECTED_ACCOUNT_PUBLICATION_ORIGIN)</string>
+	<key>BConnectedAccountPublicationTrust</key>
+	<string>$(BCONNECTED_ACCOUNT_PUBLICATION_TRUST)</string>
+	<key>BConnectedGroupPublicParamsBase64</key>
+	<string>$(BCONNECTED_GROUP_PUBLIC_PARAMS_BASE64)</string>
+	<key>BConnectedSenderCertificateTrustRootsBase64</key>
+	<array>
+		<string>$(BCONNECTED_SENDER_ROOT_BASE64)</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
