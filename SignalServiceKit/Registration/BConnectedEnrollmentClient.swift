@@ -3,23 +3,53 @@
 public import Foundation
 import CryptoKit
 
+/// Shared strict origin validation for BConnected clients that carry credentials.
+/// Hosts remain ordinary DNS names; IP literals and ambiguous numeric address forms are rejected.
+enum BConnectedOwnedOrigin {
+    static func canonicalize(_ origin: URL) throws -> URL {
+        guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.path.isEmpty || components.path == "/",
+              components.port == nil || components.port == 443,
+              let encodedHost = components.percentEncodedHost, !encodedHost.contains("%"),
+              let host = components.host, !host.isEmpty,
+              host.utf8.count <= 253,
+              host.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 46 }) else {
+            throw BConnectedEnrollmentError.invalidInput
+        }
+        let lowerHost = host.lowercased()
+        let labels = lowerHost.split(separator: ".", omittingEmptySubsequences: false)
+        guard !labels.isEmpty,
+              labels.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 63 && $0.first != "-" && $0.last != "-" && !$0.hasPrefix("xn--") }),
+              // Numeric-only and hexadecimal address forms can be interpreted as IP literals by URL stacks.
+              !labels.allSatisfy({ label in
+                  label.utf8.allSatisfy({ (48...57).contains($0) }) ||
+                  (label.hasPrefix("0x") && label.dropFirst(2).utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }))
+              }),
+              !["signal.org", "whispersystems.org"].contains(where: { lowerHost == $0 || lowerHost.hasSuffix("." + $0) }) else {
+            throw BConnectedEnrollmentError.invalidInput
+        }
+        components.scheme = "https"
+        components.host = lowerHost
+        components.path = ""
+        if components.port == 443 { components.port = nil }
+        guard let canonical = components.url, canonical.absoluteString.utf8.allSatisfy({ $0 < 128 }) else {
+            throw BConnectedEnrollmentError.invalidInput
+        }
+        return canonical
+    }
+}
+
 public struct BConnectedPublicationConfiguration {
     let origin: URL
     let hash: Data
 
     /// Only a native-validated public authority commitment may be supplied by app composition.
     init(origin: URL, authorityCommitment: Data) throws {
-        _ = try BConnectedEnrollmentEndpoint(origin: origin)
-        guard authorityCommitment.count == 32, var components = URLComponents(url: origin, resolvingAgainstBaseURL: false),
-              let host = components.host?.lowercased(), !host.isEmpty, host.utf8.count <= 253,
-              host.utf8.allSatisfy({ (48...57).contains($0) || (97...122).contains($0) || $0 == 45 || $0 == 46 }),
-              !host.split(separator: ".", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0.first == "-" || $0.last == "-" || $0.utf8.count > 63 }),
-              !["signal.org", "whispersystems.org"].contains(where: { host == $0 || host.hasSuffix("." + $0) }) else {
-            throw BConnectedEnrollmentError.invalidInput
-        }
-        components.host = host; components.path = ""
-        if components.port == 443 { components.port = nil }
-        guard let canonical = components.url else { throw BConnectedEnrollmentError.invalidInput }
+        let canonical = try BConnectedOwnedOrigin.canonicalize(origin)
+        guard authorityCommitment.count == 32 else { throw BConnectedEnrollmentError.invalidInput }
         self.origin = canonical
         self.hash = Data(SHA256.hash(data: Data(("BConnected pending publication v1\0" + canonical.absoluteString + "\0").utf8) + authorityCommitment))
     }
@@ -199,12 +229,7 @@ protocol BConnectedEnrollmentSending {
 public struct BConnectedEnrollmentEndpoint {
     let origin: URL
     public init(origin: URL) throws {
-        guard let components = URLComponents(url: origin, resolvingAgainstBaseURL: false),
-              components.scheme == "https", let host = components.host, !host.isEmpty,
-              components.user == nil, components.password == nil, components.query == nil,
-              components.fragment == nil, ["", "/"].contains(components.path),
-              components.port == nil || (1...65535).contains(components.port!) else { throw BConnectedEnrollmentError.invalidInput }
-        self.origin = origin
+        self.origin = try BConnectedOwnedOrigin.canonicalize(origin)
     }
 }
 

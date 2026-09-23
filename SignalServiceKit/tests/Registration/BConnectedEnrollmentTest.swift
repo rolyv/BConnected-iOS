@@ -38,7 +38,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     private func publicationFixture() async throws -> (MemoryStore, Sender, PublicationSender, BConnectedEnrollmentCoordinator) {
         let store = MemoryStore(), sender = Sender(), publisher = PublicationSender()
         store.supportsNativeInstallation = true
-        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: configuration, publisher: publisher)
         _ = try coordinator.prepare(input()); try coordinator.bindApprovedIntent(memberId: memberId, challenge: challenge)
         sender.result = try observation("active"); _ = try await coordinator.perform(.begin)
@@ -51,7 +51,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     private func preKeyFixture() async throws -> (MemoryStore, Sender, PreKeySender, BConnectedEnrollmentCoordinator, BConnectedPublicationConfiguration) {
         let (store, sender, _, initial) = try await publicationFixture()
         try await initial.publishAccount()
-        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let publisher = PreKeySender()
         let coordinator = BConnectedEnrollmentCoordinator(persistence: store, client: sender, publicationConfiguration: configuration, preKeyPublisher: publisher)
         return (store, sender, publisher, coordinator, configuration)
@@ -163,7 +163,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
 
     func testAccountAcceptanceExactOwnedGetRoutesCredentialsAndStrictResponses() async throws {
         let record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await acceptanceRecordBytes())
-        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let http = PublicationHTTP()
         let client = BConnectedAccountAcceptanceClient(http: http)
         for step in BConnectedAccountAcceptanceStep.allCases {
@@ -172,7 +172,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
             try await client.read(step, record: record, configuration: configuration)
             let request = http.lastRequest!
             XCTAssertEqual(request.httpMethod, "GET"); XCTAssertNil(request.httpBody)
-            XCTAssertEqual(request.url?.host, "publication.example.invalid"); XCTAssertEqual(request.url?.port, 8443)
+            XCTAssertEqual(request.url?.host, "publication.example.invalid"); XCTAssertEqual(request.url?.port, nil)
             XCTAssertNil(request.url?.query)
             let profile = try BConnectedEnrollmentWire.object(record.publication!.encryptedProfile)
             XCTAssertEqual(request.url?.path, step == .identity ? "/v1/accounts/whoami" : "/v1/profile/\(record.installedAccount!.aci)/\(profile["version"]!)")
@@ -363,14 +363,14 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
 
     func testPreKeyClientFrozenPublicOnlyACIAndPNIRoutesAndStrictEmpty204() async throws {
         var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await preKeyRecordBytes())
-        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let configuration = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let http = PublicationHTTP(), client = BConnectedPreKeyClient(http: http)
         for identity in [BConnectedPreKeyIdentity.aci, .pni] {
             if identity == .aci { record.preKeyPublication?.aci.state = .dispatched }
             else { record.preKeyPublication?.aci.state = .acknowledged; record.preKeyPublication?.pni.state = .dispatched }
             let request = try client.request(identity, record: record, configuration: configuration)
             let route = try XCTUnwrap(record.preKeyPublication?.route)
-            XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid:8443/v1/bconnected/keys/initial/" + route.operationId(identity) + "?identity=" + identity.rawValue)
+            XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid/v1/bconnected/keys/initial/" + route.operationId(identity) + "?identity=" + identity.rawValue)
             XCTAssertNotEqual(route.aciOperationId, route.pniOperationId)
             XCTAssertEqual(request.httpMethod, "PUT")
             XCTAssertEqual(request.httpBody, record.preKeyPublication?.batch(identity).request)
@@ -447,12 +447,17 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     }
 
     func testPublicationOriginRejectsUnsafeAndUpstreamRoutes() throws {
-        for string in ["http://example.invalid", "https://u:p@example.invalid", "https://example.invalid/path", "https://example.invalid?q=1", "https://example.invalid#f", "https://chat.signal.org", "https://signal.org", "https://cdn.whispersystems.org", "https://-a.invalid", "https://a..invalid"] {
-            XCTAssertThrowsError(try BConnectedPublicationConfiguration(origin: URL(string: string)!, authorityCommitment: Data(repeating: 1, count: 32)))
+        for string in ["http://example.invalid", "https://u:p@example.invalid", "https://example.invalid/path", "https://example.invalid?q=1", "https://example.invalid#f", "https://example.invalid:8443", "https://127.0.0.1", "https://2130706433", "https://0x7f000001", "https://example.invalid.", "https://exa%mple.invalid", "https://%65xample.invalid", "https://exa%6dple.invalid", "https://éxample.invalid", "https://xn--xample-9ua.invalid", "https://[::1]", "https://chat.signal.org", "https://signal.org", "https://cdn.whispersystems.org", "https://-a.invalid", "https://a..invalid"] {
+            guard let url = URL(string: string) else { continue } // Foundation itself rejects some malformed URL spellings.
+            XCTAssertThrowsError(try BConnectedPublicationConfiguration(origin: url, authorityCommitment: Data(repeating: 1, count: 32)))
         }
         let one = try BConnectedPublicationConfiguration(origin: URL(string: "https://example.invalid:443/")!, authorityCommitment: Data(repeating: 1, count: 32))
         let two = try BConnectedPublicationConfiguration(origin: URL(string: "https://example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let mixedCase = try BConnectedPublicationConfiguration(origin: URL(string: "https://ExAmPlE.InVaLiD:443/")!, authorityCommitment: Data(repeating: 1, count: 32))
+        XCTAssertEqual(one.origin.absoluteString, "https://example.invalid")
+        XCTAssertEqual(mixedCase.origin.absoluteString, "https://example.invalid")
         XCTAssertEqual(one.hash, two.hash)
+        XCTAssertEqual(one.hash, mixedCase.hash)
         XCTAssertNotEqual(one.hash, try BConnectedPublicationConfiguration(origin: one.origin, authorityCommitment: Data(repeating: 2, count: 32)).hash)
     }
 
@@ -466,10 +471,10 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     func testPublicationClientUsesExactRoutesCredentialsPayloadsAndEmptySuccessContract() async throws {
         var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await publishedRecordBytes())
         record.publication?.attributesState = .dispatched; record.publication?.profileState = .prepared
-        let config = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let config = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let http = PublicationHTTP(), client = BConnectedPublicationClient(http: http)
         let request = try client.request(.attributes, record: record, configuration: config)
-        XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid:8443/v1/accounts/attributes/")
+        XCTAssertEqual(request.url?.absoluteString, "https://publication.example.invalid/v1/accounts/attributes/")
         XCTAssertEqual(request.httpMethod, "PUT"); XCTAssertEqual(request.httpBody, record.publication?.accountAttributes)
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Basic " + Data((record.installedAccount!.aci + ":" + record.password).utf8).base64EncodedString())
         XCTAssertNil(try BConnectedEnrollmentWire.object(request.httpBody!)["recoveryPassword"])
@@ -504,7 +509,7 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     func testPublicationURLSessionRejectsRedirectsAndOversizedBodiesWithoutAutomaticRetry() async throws {
         var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: await publishedRecordBytes())
         record.publication?.attributesState = .dispatched; record.publication?.profileState = .prepared
-        let config = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid:8443")!, authorityCommitment: Data(repeating: 1, count: 32))
+        let config = try BConnectedPublicationConfiguration(origin: URL(string: "https://publication.example.invalid")!, authorityCommitment: Data(repeating: 1, count: 32))
         let client = BConnectedPublicationClient(http: BConnectedOwnedHTTP(protocolClasses: [EnrollmentURLProtocol.self], responseMode: .emptyPublication))
         EnrollmentURLProtocol.noStore = false; EnrollmentURLProtocol.redirect = false
         EnrollmentURLProtocol.responseBody = Data(); EnrollmentURLProtocol.status = 204; EnrollmentURLProtocol.calls = 0
@@ -1006,14 +1011,14 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         var record = try BConnectedEnrollmentRecord.generate(input())
         record.binding = .init(memberId: memberId, challenge: challenge)
         record.operationId = operationId
-        let client = BConnectedEnrollmentClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid:8443")!))
+        let client = BConnectedEnrollmentClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid")!))
         let request = try client.request(.checkCode, record: record, code: "12345")
-        XCTAssertEqual(request.url?.absoluteString, "https://enrollment.example.invalid:8443/v1/bconnected/enrollment/\(operationId)/check-code")
+        XCTAssertEqual(request.url?.absoluteString, "https://enrollment.example.invalid/v1/bconnected/enrollment/\(operationId)/check-code")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Basic " + Data((phone + ":" + record.password).utf8).base64EncodedString())
         let body = String(decoding: request.httpBody!, as: UTF8.self)
         for secret in [record.password, record.aci.pair.base64EncodedString(), record.pni.signedPreKey.base64EncodedString()] { XCTAssertFalse(body.contains(secret)) }
         XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
-        for url in ["http://enrollment.example.invalid", "https://u:p@example.invalid", "https://example.invalid/chat", "https://example.invalid?q=1", "https://example.invalid#secret"] {
+        for url in ["https://enrollment.example.invalid:8443", "https://127.0.0.1", "https://2130706433", "https://0x7f000001", "http://enrollment.example.invalid", "https://u:p@example.invalid", "https://example.invalid/chat", "https://example.invalid?q=1", "https://example.invalid#secret"] {
             XCTAssertThrowsError(try BConnectedEnrollmentEndpoint(origin: URL(string: url)!))
         }
     }
