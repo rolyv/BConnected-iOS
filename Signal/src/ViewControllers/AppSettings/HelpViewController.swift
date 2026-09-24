@@ -77,15 +77,26 @@ final class HelpViewController: OWSTableViewController2 {
         contents.add(loggingSection)
 
         let aboutSection = OWSTableSection()
-        aboutSection.headerTitle = OWSLocalizedString("ABOUT_SECTION_TITLE", comment: "Title for the 'about' help section")
-        aboutSection.footerTitle = OWSLocalizedString(
-            "ABOUT_SECTION_FOOTER",
-            comment: "Footer for the 'about' help section. For non-English languages, exclude the word '501c3'.",
-        )
+        let signalBaseVersion = Bundle.main.object(forInfoDictionaryKey: "BConnectedSignalBaseVersion") as? String
+        if signalBaseVersion != nil {
+            aboutSection.headerTitle = "About BConnected Chat"
+            aboutSection.footerTitle = "BConnected Chat is built on Signal’s open-source messaging technology."
+        } else {
+            aboutSection.headerTitle = OWSLocalizedString("ABOUT_SECTION_TITLE", comment: "Title for the 'about' help section")
+            aboutSection.footerTitle = OWSLocalizedString(
+                "ABOUT_SECTION_FOOTER",
+                comment: "Footer for the 'about' help section. For non-English languages, exclude the word '501c3'.",
+            )
+        }
         aboutSection.add(.copyableItem(
             label: OWSLocalizedString("SETTINGS_VERSION", comment: ""),
             value: AppVersionImpl.shared.prettyAppVersion,
         ))
+        if let signalBaseVersion {
+            let displayVersion = signalBaseVersion.hasSuffix(".0")
+                ? String(signalBaseVersion.dropLast(2)) : signalBaseVersion
+            aboutSection.add(.copyableItem(label: "Based on", value: "Signal iOS \(displayVersion)"))
+        }
         aboutSection.add(.disclosureItem(
             withText: OWSLocalizedString("SETTINGS_LEGAL_TERMS_CELL", comment: ""),
             actionBlock: { [weak self] in

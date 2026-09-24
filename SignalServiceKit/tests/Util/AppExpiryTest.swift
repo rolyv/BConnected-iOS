@@ -23,6 +23,16 @@ final class AppExpiryTest: XCTestCase {
     }
 
     override func setUp() {
+        super.setUp()
+        // InMemoryDB initializes its schema on first use. The voice-draft
+        // migration consults the app group path even for an empty database,
+        // so provide isolated test paths rather than the unsigned host app's
+        // production entitlement-dependent context. Restore it synchronously
+        // after setup instead of leaving global test state behind.
+        let originalAppContext = CurrentAppContext()
+        SetCurrentAppContext(TestAppContext(), isRunningTests: true)
+        defer { SetCurrentAppContext(originalAppContext, isRunningTests: true) }
+
         appVersion = try! AppVersionNumber4(AppVersionNumber("1.2.3.4"))
         buildDate = Date()
         db = InMemoryDB()

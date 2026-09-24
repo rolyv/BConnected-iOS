@@ -38,6 +38,28 @@ ORIGIN_KEYS = (
 )
 
 
+def release_settings() -> tuple[str, str, str]:
+    """Product releases and Signal lineage come from one committed configuration."""
+    contents = (ROOT / "Config/Project.xcconfig").read_text()
+    keys = ("MARKETING_VERSION", "CURRENT_PROJECT_VERSION", "BCONNECTED_SIGNAL_BASE_VERSION")
+    values = []
+    for key in keys:
+        matches = re.findall(rf"^{key}\s*=\s*([^\s/]+)\s*$", contents, re.MULTILINE)
+        if len(matches) != 1:
+            raise ValueError(f"expected one explicit release setting: {key}")
+        values.append(matches[0])
+    validate_semantic_version(values[0])
+    validate_semantic_version(values[2])
+    if not re.fullmatch(r"[1-9][0-9]*", values[1]):
+        raise ValueError("invalid committed build number")
+    return tuple(values)
+
+
+def validate_semantic_version(value: str) -> None:
+    if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value):
+        raise ValueError("BConnected versions must use MAJOR.MINOR.PATCH, for example 0.1.0")
+
+
 def owned_host(host: str) -> str:
     if not isinstance(host, str) or not 1 <= len(host) <= 253:
         raise ValueError("invalid owned DNS host")
@@ -108,7 +130,7 @@ def validate_public_config(config: object) -> dict[str, str]:
 
 
 def inspect_bundles(product: Path, config: dict[str, str], marketing_version: str | None = None,
-                    build_number: str | None = None) -> None:
+                    build_number: str | None = None, signal_base_version: str | None = None) -> None:
     import plistlib
     for plist in (
         product / "Info.plist",
@@ -121,6 +143,8 @@ def inspect_bundles(product: Path, config: dict[str, str], marketing_version: st
             raise ValueError(f"DM-alpha bundle version missing or changed: {plist}")
         if build_number is not None and actual.get("CFBundleVersion") != build_number:
             raise ValueError(f"DM-alpha build number missing or changed: {plist}")
+        if signal_base_version is not None and actual.get("BConnectedSignalBaseVersion") != signal_base_version:
+            raise ValueError(f"Signal compatibility version missing or changed: {plist}")
         for key, setting in PUBLIC_KEYS.items():
             expected = [config[setting]] if key == "BConnectedSenderCertificateTrustRootsBase64" else config[setting]
             if actual.get(key) != expected:
@@ -131,14 +155,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--public-config", required=True, type=Path, help="JSON with the ten explicit public Bundle keys")
     parser.add_argument("--archive", type=Path, help="create a signed .xcarchive using installed Xcode signing assets")
-    parser.add_argument("--marketing-version", help="explicit app version for this artifact, for example 8.30")
-    parser.add_argument("--build-number", help="explicit monotonically increasing build number")
+    parser.add_argument("--marketing-version", help="BConnected MAJOR.MINOR.PATCH; defaults to Config/Project.xcconfig")
+    parser.add_argument("--build-number", help="monotonically increasing build number; defaults to Config/Project.xcconfig")
     parser.add_argument("--validate-only", action="store_true")
     args = parser.parse_args()
     try:
         config = validate_public_config(json.loads(args.public_config.read_text()))
-        if args.marketing_version is not None and not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,2}", args.marketing_version):
-            raise ValueError("invalid app marketing version")
+        marketing_version, build_number, signal_base_version = release_settings()
+        if args.marketing_version is None:
+            args.marketing_version = marketing_version
+        if args.build_number is None:
+            args.build_number = build_number
+        validate_semantic_version(args.marketing_version)
         if args.build_number is not None and (not args.build_number.isascii() or not args.build_number.isdecimal()
                                              or str(int(args.build_number)) != args.build_number
                                              or int(args.build_number) < 1):
@@ -165,12 +193,13 @@ def main() -> int:
                     "BCONNECTED_SELECTED_ENTITLEMENTS=Scripts/bconnected/DMAlpha.entitlements",
                     "SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) BCONNECTED_MESSAGING_CONFIGURED BCONNECTED_OWNED_LIBSIGNAL"]
         command += [f"{key}={value}" for key, value in config.items()]
+        command.append(f"BCONNECTED_SIGNAL_BASE_VERSION={signal_base_version}")
         if args.marketing_version is not None:
             command.append(f"MARKETING_VERSION={args.marketing_version}")
         if args.build_number is not None:
             command.append(f"CURRENT_PROJECT_VERSION={args.build_number}")
         subprocess.run(command, cwd=ROOT, env=environment, check=True)
-        inspect_bundles(product, config, args.marketing_version, args.build_number)
+        inspect_bundles(product, config, args.marketing_version, args.build_number, signal_base_version)
         print(f"Verified explicit public DM-alpha inputs in app and both extensions: {product}")
         return 0
     except subprocess.CalledProcessError as error:

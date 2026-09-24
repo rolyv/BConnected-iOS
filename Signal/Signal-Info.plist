@@ -24,6 +24,8 @@
 	<array>
 		<string>$(BCONNECTED_SENDER_ROOT_BASE64)</string>
 	</array>
+	<key>BConnectedSignalBaseVersion</key>
+	<string>$(BCONNECTED_SIGNAL_BASE_VERSION)</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>LocalFileBackupBGProcessingTaskRunner</string>
@@ -53,7 +55,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>8.30</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleURLTypes</key>

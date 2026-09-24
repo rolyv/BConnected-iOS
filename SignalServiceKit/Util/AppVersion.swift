@@ -25,8 +25,10 @@ public protocol AppVersion {
     var lastAppVersionForCrashDetection: String? { get }
 
     /// Internally, we use a version format with 4 dotted values to uniquely
-    /// identify builds. The first three values are the the release version, the
-    /// fourth value is the last value from the build version.
+    /// identify builds. The first three values are the upstream compatibility
+    /// version when configured, or the release version otherwise. The fourth
+    /// value is the build version. Product marketing versions are independent
+    /// of the upstream version used by persisted state and service protocols.
     ///
     /// For example, `3.4.5.6`.
     var currentAppVersion: String { get }
@@ -175,8 +177,9 @@ public class AppVersionImpl: AppVersion {
     public var lastAppVersionForCrashDetection: String? { userDefaults.string(forKey: lastVersionForCrashDetectionKey) }
 
     /// Internally, we use a version format with 4 dotted values to uniquely
-    /// identify builds. The first three values are the the release version, the
-    /// fourth value is the last value from the build version.
+    /// identify builds. The first three values are the upstream compatibility
+    /// version when configured, or the release version otherwise. The fourth
+    /// value is the build version.
     ///
     /// For example, `3.4.5.6`.
     public let currentAppVersion: String
@@ -221,29 +224,75 @@ public class AppVersionImpl: AppVersion {
 
     // MARK: - Setup
 
-    private init(bundle: Bundle, userDefaults: UserDefaults) {
+    private convenience init(bundle: Bundle, userDefaults: UserDefaults) {
         let marketingVersion = bundle.string(forInfoDictionaryKey: "CFBundleShortVersionString")
-        var marketingVersionComponents = marketingVersion.components(separatedBy: ".")
-        while marketingVersionComponents.count < 3 {
-            marketingVersionComponents.append("0")
-        }
         let buildNumber = bundle.string(forInfoDictionaryKey: "CFBundleVersion")
-        self.currentAppVersion = "\(marketingVersionComponents.joined(separator: ".")).\(buildNumber)"
-        self.prettyAppVersion = "\(marketingVersion) (\(buildNumber))"
-
+        let buildDate: Date
         if
             let rawBuildDetails = bundle.app.object(forInfoDictionaryKey: "BuildDetails"),
             let buildDetails = rawBuildDetails as? [String: Any],
             let buildTimestamp = buildDetails["Timestamp"] as? TimeInterval
         {
-            self.buildDate = Date(timeIntervalSince1970: buildTimestamp)
+            buildDate = Date(timeIntervalSince1970: buildTimestamp)
         } else {
 #if !TESTABLE_BUILD
             Logger.warn("Expected a build date to be defined. Assuming build date is right now")
 #endif
-            self.buildDate = Date()
+            buildDate = Date()
         }
 
+        do {
+            try self.init(
+                marketingVersion: marketingVersion,
+                buildNumber: buildNumber,
+                signalBaseVersion: bundle.object(forInfoDictionaryKey: "BConnectedSignalBaseVersion"),
+                userDefaults: userDefaults,
+                buildDate: buildDate,
+            )
+        } catch {
+            owsFail("Invalid bundled app version configuration: \(error)")
+        }
+    }
+
+    init(
+        marketingVersion: String,
+        buildNumber: String,
+        signalBaseVersion: Any?,
+        userDefaults: UserDefaults,
+        buildDate: Date,
+    ) throws {
+        let internalVersion: String
+        if let signalBaseVersion {
+            // An explicit compatibility version must never fall back to the
+            // product version: a lower version can trigger old migrations or
+            // server expiry. Reject unresolved build settings and malformed
+            // values before any version is persisted or sent to a service.
+            guard let signalBaseVersion = signalBaseVersion as? String else {
+                throw OWSGenericError("BConnectedSignalBaseVersion must be a string.")
+            }
+            let components = signalBaseVersion.components(separatedBy: ".")
+            guard components.count == 3, components.allSatisfy({ component in
+                guard let value = UInt(component) else { return false }
+                return String(value) == component
+            }) else {
+                throw OWSGenericError("BConnectedSignalBaseVersion must have three canonical nonnegative integer parts.")
+            }
+            internalVersion = signalBaseVersion
+        } else {
+            // Preserve the upstream behavior for bundles without the fork's
+            // optional compatibility setting.
+            var components = marketingVersion.components(separatedBy: ".")
+            while components.count < 3 {
+                components.append("0")
+            }
+            internalVersion = components.joined(separator: ".")
+        }
+
+        let currentAppVersion = "\(internalVersion).\(buildNumber)"
+        _ = try AppVersionNumber4(AppVersionNumber(currentAppVersion))
+        self.currentAppVersion = currentAppVersion
+        self.prettyAppVersion = "\(marketingVersion) (\(buildNumber))"
+        self.buildDate = buildDate
         self.userDefaults = userDefaults
     }
 
@@ -258,6 +307,7 @@ public class AppVersionImpl: AppVersion {
     }
 
     public func dumpToLog() {
+        Logger.info("productVersion: \(prettyAppVersion)")
         Logger.info("firstAppVersion: \(formatForLogging(firstAppVersion))")
         if let backupAppVersion {
             Logger.info("backupAppVersion: \(formatForLogging(backupAppVersion))")

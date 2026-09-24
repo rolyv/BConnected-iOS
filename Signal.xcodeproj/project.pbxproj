@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC0F01000000000000000001 /* AppVersionTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0F01000000000000000002 /* AppVersionTest.swift */; };
 		BC0A03000000000000000001 /* bconnected-account-acceptance-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */; };
 		BC0E04000000000000000005 /* BConnectedCommunityEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */; };
 		BC0E04000000000000000003 /* BConnectedCommunityEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */; };
@@ -4298,6 +4299,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC0F01000000000000000002 /* AppVersionTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVersionTest.swift; sourceTree = "<group>"; };
 		BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/bconnected-account-acceptance-v1.json"; sourceTree = "<group>"; };
 		BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollmentStore.swift; sourceTree = "<group>"; };
 		BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollment.swift; sourceTree = "<group>"; };
@@ -14810,6 +14812,7 @@
 			children = (
 				D93F4D5B2D801D690042926C /* Avatars */,
 				F908C67A29F08E4E00C3EFC4 /* AppExpiryTest.swift */,
+				BC0F01000000000000000002 /* AppVersionTest.swift */,
 				66B1E26F2CB48C48005F43AC /* Array+SSKTest.swift */,
 				F9C612B3284E466B00B2199A /* CGPointExtensionsTest.swift */,
 				F962B38B293F9F9F00765BD8 /* CRC32Test.swift */,
@@ -20736,6 +20739,7 @@
 				50BA9B2A3049DDF9006DB636 /* AccountEntropyPoolTest.swift in Sources */,
 				502E586D3040BED600D30164 /* AnyGroupIdentifierTest.swift in Sources */,
 				F908C67B29F08E4E00C3EFC4 /* AppExpiryTest.swift in Sources */,
+				BC0F01000000000000000001 /* AppVersionTest.swift in Sources */,
 				66B1E2702CB48C53005F43AC /* Array+SSKTest.swift in Sources */,
 				D92EFDEF2F69B9D80031D257 /* AttachmentBackfillManagerTest.swift in Sources */,
 				669573082C1B9ECD0092B755 /* AttachmentDownloadQueueDBTests.swift in Sources */,
@@ -22119,7 +22123,6 @@
 				CLANG_ENABLE_MODULES = YES;
 				BCONNECTED_SELECTED_ENTITLEMENTS = Signal/Signal.entitlements;
 				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_OPTIMIZATION_LEVEL = 3;
@@ -22382,7 +22385,6 @@
 				CLANG_ENABLE_MODULES = YES;
 				BCONNECTED_SELECTED_ENTITLEMENTS = Signal/Signal.entitlements;
 				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_SOURCE_FILE_NAMES[arch=*]" = Signal/test/Assets/input_video.mp4;
 				GCC_OPTIMIZATION_LEVEL = 3;
@@ -22755,7 +22757,6 @@
 				BCONNECTED_SELECTED_ENTITLEMENTS = Signal/Signal.entitlements;
 				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_SOURCE_FILE_NAMES[arch=*]" = Signal/test/Assets/input_video.mp4;
@@ -22796,7 +22797,6 @@
 				CLANG_ENABLE_MODULES = YES;
 				BCONNECTED_SELECTED_ENTITLEMENTS = "Signal/Signal-AppStore.entitlements";
 				CODE_SIGN_ENTITLEMENTS = "$(BCONNECTED_SELECTED_ENTITLEMENTS)";
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				"EXCLUDED_SOURCE_FILE_NAMES[arch=*]" = Signal/test/Assets/input_video.mp4;
 				GCC_OPTIMIZATION_LEVEL = 3;
