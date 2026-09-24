@@ -125,11 +125,11 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     private var continuationNotBefore: Date? { [communityProgress?.intentRetryNotBefore, requestRetryNotBefore].compactMap { $0 }.max() }
     var canContinue: Bool { isOnline && !busy && !stateUnreadable && (continuationNotBefore.map { clock >= $0 } ?? true) }
     var intentWait: Int? { continuationNotBefore.map { max(0, Int(ceil($0.timeIntervalSince(clock)))) } }
-    var smsWait: Int? { remaining(communityProgress?.phoneSignup?.nextSmsSeconds) }
-    var checkWait: Int? { remaining(communityProgress?.phoneSignup?.nextCheckSeconds) }
-    private func remaining(_ seconds: Int?) -> Int? {
-        guard let seconds, let observed = communityProgress?.phoneSignup?.observedAt, clock >= observed else { return nil }
-        return max(0, Int(ceil(observed.addingTimeInterval(Double(seconds)).timeIntervalSince(clock))))
+    var smsWait: Int? { remaining(communityProgress?.phoneSignup?.nextSmsSeconds, at: clock) }
+    var checkWait: Int? { remaining(communityProgress?.phoneSignup?.nextCheckSeconds, at: clock) }
+    private func remaining(_ seconds: Int?, at date: Date) -> Int? {
+        guard let seconds, let observed = communityProgress?.phoneSignup?.observedAt, date >= observed else { return nil }
+        return max(0, Int(ceil(observed.addingTimeInterval(Double(seconds)).timeIntervalSince(date))))
     }
     static func duration(_ seconds: Int) -> String { String(format: "%d:%02d", seconds / 60, seconds % 60) }
     var resendTitle: String {
@@ -390,8 +390,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
 
     private func schedulePoll() {
         guard isOnline, !stateUnreadable else { return }
+        let now = Date()
         if screen == .pending {
-            nextPoll = max(Date().addingTimeInterval(30), requestRetryNotBefore ?? .distantPast)
+            nextPoll = max(now.addingTimeInterval(30), requestRetryNotBefore ?? .distantPast)
             return
         }
         guard [.verifying, .resolvingMembership, .settingUp].contains(screen), polls < 4 else {
@@ -401,11 +402,16 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         let waits: [TimeInterval] = [2, 5, 10, 20]
         var delay = waits[polls]
         if screen == .verifying {
-            let positive = [smsWait, checkWait].compactMap { $0 }.filter { $0 > 0 }
+            // A response normally arrives after the last UI timer tick. Using `clock`
+            // here makes that new observation appear to be from the future, loses its
+            // cooldown, and can exhaust all four polls before the server permits a resend.
+            // Only the resulting fresh status response can change send/check eligibility.
+            let positive = [communityProgress?.phoneSignup?.nextSmsSeconds, communityProgress?.phoneSignup?.nextCheckSeconds]
+                .compactMap { remaining($0, at: now) }.filter { $0 > 0 }
             if let shortest = positive.min() { delay = max(delay, Double(shortest)) }
             else if freshPhoneObservation && (canCheck || codeExpired) && canSend { return }
         }
-        nextPoll = max(Date().addingTimeInterval(delay), requestRetryNotBefore ?? .distantPast); polls += 1
+        nextPoll = max(now.addingTimeInterval(delay), requestRetryNotBefore ?? .distantPast); polls += 1
     }
 }
 

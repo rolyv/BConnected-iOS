@@ -10,19 +10,76 @@ import libPhoneNumber_iOS
 /// Owned enrollment has no escape into legacy registration, linking, or recovery.
 final class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollmentView> {
     private let pathMonitor = NWPathMonitor()
-    init(initialRegistration: Bool, makeCoordinator: @MainActor (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
+    private let model: BConnectedEnrollmentViewModel
+    private let notificationCenter: NotificationCenter
+    private let applicationIsActive: () -> Bool
+    private var isVisible = false
+    private var appIsActive: Bool
+    private var forwardedActive = false
+
+    convenience init(initialRegistration: Bool, makeCoordinator: @MainActor (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
          makeCommunity: @escaping @MainActor (BConnectedEnrollmentEndpoint, BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator,
          makePreparation: @escaping @MainActor (String) async throws -> BConnectedEnrollmentPreparation,
          onCompleted: @escaping @MainActor () -> Void) {
         let model = BConnectedEnrollmentViewModel(initialRegistration: initialRegistration, makeCoordinator: makeCoordinator,
             makeCommunity: makeCommunity, makePreparation: makePreparation, onCompleted: onCompleted)
-        super.init(rootView: BConnectedEnrollmentView(model: model))
+        self.init(model: model)
         pathMonitor.pathUpdateHandler = { [weak model] path in
             Task { @MainActor in model?.setOnline(path.status == .satisfied) }
         }
         pathMonitor.start(queue: DispatchQueue(label: "BConnected.signup.connectivity"))
     }
-    deinit { pathMonitor.cancel() }
+
+    /// UIKit owns this screen's lifecycle; no SwiftUI App/Scene supplies its activation.
+    /// Dependency injection also lets lifecycle regression tests avoid a real path monitor.
+    init(model: BConnectedEnrollmentViewModel, notificationCenter: NotificationCenter = .default,
+         applicationIsActive: @escaping () -> Bool = { UIApplication.shared.applicationState == .active }) {
+        self.model = model
+        self.notificationCenter = notificationCenter
+        self.applicationIsActive = applicationIsActive
+        self.appIsActive = applicationIsActive()
+        super.init(rootView: BConnectedEnrollmentView(model: model))
+        notificationCenter.addObserver(self, selector: #selector(applicationDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        notificationCenter.addObserver(self, selector: #selector(applicationWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        isVisible = true
+        appIsActive = applicationIsActive()
+        forwardActivity()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // A normal help/country sheet overlays this controller without making it disappear.
+        isVisible = false
+        forwardActivity()
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        appIsActive = true
+        forwardActivity()
+    }
+
+    @objc private func applicationWillResignActive() {
+        appIsActive = false
+        forwardActivity()
+    }
+
+    private func forwardActivity() {
+        // UIKit application notifications are delivered synchronously on the main thread.
+        // Cancel pending explicit intent before any suspended request can resume.
+        let active = isVisible && appIsActive
+        guard active != forwardedActive else { return }
+        forwardedActive = active
+        model.setActive(active)
+    }
+
+    deinit {
+        notificationCenter.removeObserver(self)
+        pathMonitor.cancel()
+    }
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Unavailable") }
 }
@@ -47,7 +104,6 @@ private enum SignupStyle {
 
 struct BConnectedEnrollmentView: View {
     @ObservedObject var model: BConnectedEnrollmentViewModel
-    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openURL) private var openURL
@@ -97,9 +153,6 @@ struct BConnectedEnrollmentView: View {
                 }
             }
         }
-        .onAppear { model.setActive(true) }
-        .onDisappear { model.setActive(false) }
-        .onChange(of: scenePhase) { phase in model.setActive(phase == .active) }
         .onReceive(timer) { model.tick($0) }
         .onChange(of: model.screen) { _ in
             phoneFocused = false; field = nil; headingFocused = true

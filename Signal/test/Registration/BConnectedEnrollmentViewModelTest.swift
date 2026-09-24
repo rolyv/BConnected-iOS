@@ -140,6 +140,77 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
     }
 
     @MainActor
+    func testUIKitLifecycleCancelsPendingSendSynchronouslyAndForegroundOnlyReconciles() async {
+        let (model, community, _) = fixture(member: false)
+        community.verified = false
+        let notifications = NotificationCenter()
+        var appActive = false
+        let controller = BConnectedEnrollmentViewController(model: model, notificationCenter: notifications, applicationIsActive: { appActive })
+        controller.beginAppearanceTransition(true, animated: false); controller.endAppearanceTransition()
+        await settle(model)
+        XCTAssertEqual(community.phoneReads, 0, "Visible signup must wait until the application is active")
+        appActive = true
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await settle(model)
+        XCTAssertEqual(community.phoneReads, 1)
+        XCTAssertTrue(model.canSend)
+
+        var releaseRead: CheckedContinuation<Void, Never>?
+        community.beforePhoneRefresh = {
+            community.beforePhoneRefresh = nil
+            await withCheckedContinuation { releaseRead = $0 }
+        }
+        model.code = "123456"
+        model.sendCode()
+        for _ in 0..<500 { if releaseRead != nil { break }; await Task.yield() }
+        XCTAssertNotNil(releaseRead)
+        appActive = false
+        notifications.post(name: UIApplication.willResignActiveNotification, object: nil)
+        XCTAssertEqual(model.code, "", "Backgrounding must clear the in-memory code before the notification returns")
+        XCTAssertFalse(model.canSend)
+        appActive = true
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        releaseRead?.resume(); await settle(model)
+        XCTAssertEqual(community.sends, 0)
+        XCTAssertGreaterThanOrEqual(community.phoneReads, 3)
+        XCTAssertEqual(model.screen, .verifying)
+
+        controller.beginAppearanceTransition(false, animated: false); controller.endAppearanceTransition()
+        let reads = community.phoneReads
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await settle(model)
+        XCTAssertEqual(community.phoneReads, reads, "A controller removed from presentation must not restart signup")
+    }
+
+    @MainActor
+    func testUIKitForegroundRefreshesExpiredSavedSignupWithoutProcessRelaunch() async {
+        let (model, community, _) = fixture(member: false)
+        community.verified = false; community.smsSeconds = 60
+        let notifications = NotificationCenter()
+        var appActive = true
+        let controller = BConnectedEnrollmentViewController(model: model, notificationCenter: notifications, applicationIsActive: { appActive })
+        controller.beginAppearanceTransition(true, animated: false); controller.endAppearanceTransition()
+        await settle(model)
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertEqual(community.phoneReads, 1)
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await settle(model)
+        XCTAssertEqual(community.phoneReads, 1, "Duplicate active notifications must not duplicate the status read")
+
+        appActive = false
+        notifications.post(name: UIApplication.willResignActiveNotification, object: nil)
+        community.beforePhoneRefresh = { throw BConnectedEnrollmentError.rejected(.enrollmentExpired, retryAfterSeconds: nil) }
+        appActive = true
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await settle(model)
+        XCTAssertEqual(community.phoneReads, 2)
+        XCTAssertEqual(model.screen, .help)
+        XCTAssertTrue(model.hasSavedSetup)
+        XCTAssertEqual(community.sends, 0)
+        controller.beginAppearanceTransition(false, animated: false); controller.endAppearanceTransition()
+    }
+
+    @MainActor
     func testOfflineThenReconnectCancelsPendingExplicitSendEvenIfReadReturnsLater() async {
         let (model, community, _) = fixture(member: false)
         community.verified = false
@@ -257,6 +328,40 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         XCTAssertFalse(model.canSend)
         XCTAssertEqual(community.sends, 0)
         XCTAssertGreaterThan(community.phoneReads, 1)
+    }
+
+    @MainActor
+    func testResponseNewerThanUITickWaitsForServerCooldownInsteadOfExhaustingPolls() async {
+        let (model, community, _) = fixture(member: false)
+        community.verified = false; community.smsSeconds = 60
+        community.observedAt = Date()
+        // Network completion between UI ticks is the normal case, not a clock change.
+        model.tick(community.observedAt!.addingTimeInterval(-1))
+        model.setActive(true); await settle(model)
+        let observedAt = community.observedAt!
+        XCTAssertEqual(community.phoneReads, 1)
+        XCTAssertFalse(model.canSend)
+        for elapsed in [3.0, 8.0, 18.0, 38.0, 59.0] {
+            model.tick(observedAt.addingTimeInterval(elapsed)); await settle(model)
+            XCTAssertEqual(community.phoneReads, 1, "A known 60-second cooldown must not consume the short retry budget")
+            XCTAssertFalse(model.canSend)
+        }
+
+        var releaseRead: CheckedContinuation<Void, Never>?
+        community.beforePhoneRefresh = {
+            community.beforePhoneRefresh = nil
+            await withCheckedContinuation { releaseRead = $0 }
+            community.smsSeconds = 0
+            community.observedAt = Date()
+        }
+        model.tick(observedAt.addingTimeInterval(61))
+        for _ in 0..<500 { if releaseRead != nil { break }; await Task.yield() }
+        XCTAssertNotNil(releaseRead)
+        XCTAssertFalse(model.canSend, "An elapsed countdown cannot authorize another text")
+        releaseRead?.resume(); await settle(model)
+        XCTAssertEqual(community.phoneReads, 2)
+        XCTAssertTrue(model.canSend)
+        XCTAssertEqual(community.sends, 0)
     }
 
     @MainActor
@@ -524,11 +629,12 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         var intentRetries: [Bool] = []
         var beforePhoneRefresh: (() async throws -> Void)?
         var checkError: BConnectedEnrollmentError?
+        var observedAt: Date?
         func progress() throws -> BConnectedCommunityProgress {
             if unreadable { throw BConnectedEnrollmentError.persistenceUnavailable }
             return .init(member: hasMember ? .init(id: "member", fullName: "José Pérez", graduationYear: 2008, status: status) : nil,
                 applicationOutcomeUncertain: false, savedApplicationPhone: "+13055550123", savedApplicationName: "José Pérez", savedApplicationYear: 2008,
-                phoneSignup: .init(hasChallenge: true, hasOperation: true, phoneVerified: verified, smsOutcomeNeedsExplicitDecision: false, nextSmsSeconds: smsSeconds, nextCheckSeconds: checkSeconds, observedAt: Date()),
+                phoneSignup: .init(hasChallenge: true, hasOperation: true, phoneVerified: verified, smsOutcomeNeedsExplicitDecision: false, nextSmsSeconds: smsSeconds, nextCheckSeconds: checkSeconds, observedAt: observedAt ?? Date()),
                 canRestartPhoneSetup: false, intentOutcomeUncertain: intentWait != nil, intentRetryNotBefore: intentWait)
         }
         func draft() throws -> BConnectedSignupDraft? { nil }
