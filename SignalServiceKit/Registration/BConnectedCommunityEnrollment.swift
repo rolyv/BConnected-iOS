@@ -32,6 +32,13 @@ public struct BConnectedCommunityProgress {
     public let canRestartPhoneSetup: Bool
     public let intentOutcomeUncertain: Bool
     public let intentRetryNotBefore: Date?
+    public var canCorrectPhone = false
+    public var phoneCorrection: BConnectedPhoneCorrectionProgress?
+}
+
+public struct BConnectedPhoneCorrectionProgress {
+    public let replacementPhone: String
+    public let retiring: Bool
 }
 
 public struct BConnectedPhoneSignupProgress {
@@ -77,18 +84,72 @@ struct BConnectedCommunityRecord: Codable, CustomStringConvertible, CustomDebugS
         var sendNeedsExplicitDecision = false
         var observedAt: Date?
     }
+    /// Frozen before dispatch. The original application remains installed until a matching receipt commits.
+    struct PhoneCorrection: Codable, Equatable {
+        let correctionId: String
+        let originalApplicationId: String
+        let replacementPhone: String
+        let replacementNonce: String
+        let createdAtMillis: Int
+        var receipt: BConnectedPhoneCorrectionObservation?
+
+        func validate() throws {
+            _ = try BConnectedEnrollmentWire.uuid(correctionId)
+            _ = try BConnectedEnrollmentWire.uuid(originalApplicationId)
+            try BConnectedEnrollmentWire.phone(replacementPhone)
+            _ = try BConnectedEnrollmentWire.nonce(replacementNonce)
+            guard correctionId != originalApplicationId, createdAtMillis > 0 else { throw BConnectedEnrollmentError.persistenceUnavailable }
+            if let receipt {
+                try receipt.validate(correction: self)
+            }
+        }
+    }
+    struct RetiredPhoneApplication: Codable {
+        let application: PhoneApplication
+        let challenge: PhoneChallenge
+        let signup: PhoneSignup?
+        let correction: PhoneCorrection
+    }
     var draft: BConnectedSignupDraft?
     var version = 1
     var applicationDispatched = false
     var phoneApplication: PhoneApplication?
     var phoneChallenge: PhoneChallenge?
     var phoneSignup: PhoneSignup?
+    var phoneCorrection: PhoneCorrection?
+    var retiredPhoneApplications: [RetiredPhoneApplication]?
     var session: Session?
     var intentRetryNotBefore: Date?
     var binding: Binding?
 
     func validate() throws {
         guard version == 1 else { throw BConnectedEnrollmentError.persistenceUnavailable }
+        if let phoneCorrection {
+            try phoneCorrection.validate()
+            guard phoneCorrection.originalApplicationId == phoneChallenge?.applicationId,
+                  phoneCorrection.replacementNonce != phoneApplication?.nonce,
+                  phoneCorrection.receipt?.state != .ready,
+                  session == nil, binding == nil, intentRetryNotBefore == nil,
+                  phoneSignup?.observation?.phoneVerified != true else { throw BConnectedEnrollmentError.persistenceUnavailable }
+        }
+        for retired in retiredPhoneApplications ?? [] {
+            try retired.correction.validate()
+            guard retired.correction.originalApplicationId == retired.challenge.applicationId,
+                  retired.correction.receipt?.state == .ready,
+                  retired.signup?.observation?.phoneVerified != true,
+                  retired.correction.replacementNonce != retired.application.nonce else { throw BConnectedEnrollmentError.persistenceUnavailable }
+            try BConnectedEnrollmentWire.phone(retired.application.phone)
+            _ = try BConnectedEnrollmentWire.nonce(retired.application.nonce)
+        }
+        if let retired = retiredPhoneApplications?.last {
+            guard phoneApplication?.phone == retired.correction.replacementPhone,
+                  phoneApplication?.nonce == retired.correction.replacementNonce,
+                  phoneApplication?.fullName == retired.application.fullName,
+                  phoneApplication?.graduationYear == retired.application.graduationYear,
+                  phoneChallenge?.applicationId == retired.correction.receipt?.replacementApplicationId else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+        }
         if let phoneApplication {
             try BConnectedEnrollmentWire.phone(phoneApplication.phone)
             _ = try BConnectedEnrollmentWire.metadata(phoneApplication.fullName, limit: 400)
@@ -159,6 +220,25 @@ enum BConnectedPhoneSignupOperation: String { case begin, sendCode = "send-code"
 protocol BConnectedPhoneSignupSending {
     func send(_ operation: BConnectedPhoneSignupOperation, application: BConnectedCommunityRecord.PhoneApplication,
               challenge: BConnectedCommunityRecord.PhoneChallenge, code: String?) async throws -> BConnectedPhoneSignupObservation
+    func correct(_ correction: BConnectedCommunityRecord.PhoneCorrection, application: BConnectedCommunityRecord.PhoneApplication,
+                 statusOnly: Bool) async throws -> BConnectedPhoneCorrectionObservation
+}
+
+struct BConnectedPhoneCorrectionObservation: Codable, Equatable {
+    enum State: String, Codable { case retiring, ready = "replacement_ready" }
+    let correctionId: String
+    let originalApplicationId: String
+    let replacementApplicationId: String
+    let state: State
+    let expiresAt: Int?
+
+    func validate(correction: BConnectedCommunityRecord.PhoneCorrection) throws {
+        _ = try BConnectedEnrollmentWire.uuid(replacementApplicationId)
+        guard correctionId == correction.correctionId, originalApplicationId == correction.originalApplicationId,
+              replacementApplicationId != originalApplicationId, replacementApplicationId != correctionId,
+              correction.receipt.map({ $0.replacementApplicationId == replacementApplicationId }) ?? true,
+              state == .retiring ? expiresAt == nil : (expiresAt ?? 0) > 0 else { throw BConnectedEnrollmentError.invalidResponse }
+    }
 }
 
 enum BConnectedCommunityWire {
@@ -264,6 +344,49 @@ final class BConnectedPhoneSignupClient: BConnectedPhoneSignupSending {
     private let http: any BConnectedOwnedHTTPSending
     init(endpoint: BConnectedEnrollmentEndpoint, http: any BConnectedOwnedHTTPSending = BConnectedOwnedHTTP()) {
         self.endpoint = endpoint; self.http = http
+    }
+
+    func correct(_ correction: BConnectedCommunityRecord.PhoneCorrection, application: BConnectedCommunityRecord.PhoneApplication,
+                 statusOnly: Bool) async throws -> BConnectedPhoneCorrectionObservation {
+        try correction.validate()
+        var components = URLComponents(url: endpoint.origin, resolvingAgainstBaseURL: false)!
+        components.path = "/v1/bconnected/signup/\(correction.originalApplicationId)/\(statusOnly ? "supersession-status" : "supersede")"
+        guard let url = components.url else { throw BConnectedEnrollmentError.invalidInput }
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.httpBody = try BConnectedEnrollmentWire.encode([
+            "applicationId": correction.originalApplicationId, "enrollmentNonce": application.nonce, "phoneNumber": application.phone,
+            "correctionId": correction.correctionId, "replacementPhoneNumber": correction.replacementPhone,
+            "replacementEnrollmentNonce": correction.replacementNonce
+        ])
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        let (data, status) = try await http.send(request)
+        guard status == 200 || status == 202 else {
+            guard let root = try? BConnectedEnrollmentWire.fields(BConnectedEnrollmentWire.object(data), required: ["code"]),
+                  let raw = root["code"] as? String, let code = BConnectedEnrollmentError.Code(rawValue: raw) else {
+                throw BConnectedEnrollmentError.unavailable
+            }
+            let statuses: [BConnectedEnrollmentError.Code: Int] = [.invalidRequest: 400, .invalidCredentials: 401,
+                .enrollmentUnavailable: 404, .enrollmentConflict: 409, .temporarilyUnavailable: 503]
+            guard statuses[code] == status else { throw BConnectedEnrollmentError.invalidResponse }
+            throw BConnectedEnrollmentError.rejected(code, retryAfterSeconds: nil)
+        }
+        do {
+            let root = try BConnectedEnrollmentWire.fields(BConnectedEnrollmentWire.object(data), required: [
+                "correctionId", "originalApplicationId", "replacementApplicationId", "state", "expiresAt", "registrationAuthorized"
+            ])
+            guard try !BConnectedEnrollmentWire.boolean(root["registrationAuthorized"]),
+                  let state = BConnectedPhoneCorrectionObservation.State(rawValue: try BConnectedEnrollmentWire.text(root["state"])),
+                  status == (state == .ready ? 200 : 202) else { throw BConnectedEnrollmentError.invalidResponse }
+            let observation = BConnectedPhoneCorrectionObservation(correctionId: try BConnectedEnrollmentWire.uuid(root["correctionId"]),
+                originalApplicationId: try BConnectedEnrollmentWire.uuid(root["originalApplicationId"]),
+                replacementApplicationId: try BConnectedEnrollmentWire.uuid(root["replacementApplicationId"]), state: state,
+                expiresAt: root["expiresAt"] is NSNull ? nil : try BConnectedEnrollmentWire.integer(root["expiresAt"]))
+            try observation.validate(correction: correction)
+            return observation
+        } catch { throw BConnectedEnrollmentError.invalidResponse }
     }
 
     func send(_ operation: BConnectedPhoneSignupOperation, application: BConnectedCommunityRecord.PhoneApplication,
@@ -380,7 +503,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                                 nextCheckSeconds: observation?.nextCheckSeconds,
                                 observedAt: record.phoneSignup?.observedAt)
         } else { phoneSignup = nil }
-        return .init(member: record.session?.member,
+        var progress = BConnectedCommunityProgress(member: record.session?.member,
                      applicationOutcomeUncertain: record.applicationDispatched && record.session == nil && record.phoneChallenge == nil,
                      savedApplicationPhone: record.phoneApplication?.phone,
                      savedApplicationName: record.phoneApplication?.fullName,
@@ -389,6 +512,13 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                      canRestartPhoneSetup: mayRestart,
                      intentOutcomeUncertain: record.intentRetryNotBefore != nil && record.binding == nil,
                      intentRetryNotBefore: record.intentRetryNotBefore)
+        if record.phoneChallenge != nil, record.phoneApplication != nil, record.phoneCorrection == nil,
+           record.session == nil, record.binding == nil, record.intentRetryNotBefore == nil,
+           record.phoneSignup?.observation?.phoneVerified != true {
+            progress.canCorrectPhone = try enrollment.progress() == nil
+        }
+        progress.phoneCorrection = record.phoneCorrection.map { .init(replacementPhone: $0.replacementPhone, retiring: $0.receipt?.state == .retiring) }
+        return progress
     }
 
     public func draft() throws -> BConnectedSignupDraft? {
@@ -399,6 +529,85 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         try persistence.transaction { record in
             guard !record.applicationDispatched else { return }
             record.draft = draft
+        }
+    }
+
+    /// Explicit correction or renewal of an unverified attempt. This never sends an SMS.
+    /// A retry always reconciles and reuses the complete frozen tuple before any replay.
+    public func correctPhone(_ replacementPhone: String) async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard let signup else { throw BConnectedEnrollmentError.unavailable }
+        try BConnectedEnrollmentWire.phone(replacementPhone)
+        guard try enrollment.progress() == nil else { throw BConnectedEnrollmentError.immutableConflict }
+        inFlight = true; defer { inFlight = false }
+        let snapshot = try persistence.transaction { record -> BConnectedCommunityRecord in
+            guard let application = record.phoneApplication, let challenge = record.phoneChallenge,
+                  record.session == nil, record.binding == nil, record.intentRetryNotBefore == nil,
+                  record.phoneSignup?.observation?.phoneVerified != true else { throw BConnectedEnrollmentError.immutableConflict }
+            if let frozen = record.phoneCorrection {
+                guard frozen.replacementPhone == replacementPhone else { throw BConnectedEnrollmentError.immutableConflict }
+            } else {
+                var random = [UInt8](repeating: 0, count: 32)
+                guard SecRandomCopyBytes(kSecRandomDefault, random.count, &random) == errSecSuccess else { throw BConnectedEnrollmentError.unavailable }
+                let nonce = BConnectedEnrollmentWire.base64url(Data(random))
+                guard nonce != application.nonce else { throw BConnectedEnrollmentError.unavailable }
+                record.phoneCorrection = .init(correctionId: UUID().uuidString.lowercased(), originalApplicationId: challenge.applicationId,
+                    replacementPhone: replacementPhone, replacementNonce: nonce, createdAtMillis: Int(now().timeIntervalSince1970 * 1000))
+            }
+            return record
+        }
+        let correction = snapshot.phoneCorrection!, application = snapshot.phoneApplication!
+        try Task.checkCancellation()
+        let result: BConnectedPhoneCorrectionObservation
+        do {
+            // Status is non-creating and may finish only this existing server retirement.
+            result = try await signup.correct(correction, application: application, statusOnly: true)
+        } catch BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil) where correction.receipt == nil {
+            try Task.checkCancellation()
+            result = try await signup.correct(correction, application: application, statusOnly: false)
+        }
+        try commitPhoneCorrection(result, snapshot: snapshot)
+    }
+
+    public func refreshPhoneCorrection() async throws {
+        guard !inFlight else { throw BConnectedEnrollmentError.busy }
+        guard let signup else { throw BConnectedEnrollmentError.unavailable }
+        inFlight = true; defer { inFlight = false }
+        let snapshot = try persistence.transaction { $0 }
+        guard let correction = snapshot.phoneCorrection, let application = snapshot.phoneApplication else {
+            throw BConnectedEnrollmentError.operationRequired
+        }
+        let result: BConnectedPhoneCorrectionObservation
+        do { result = try await signup.correct(correction, application: application, statusOnly: true) }
+        catch BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil) where correction.receipt == nil {
+            throw BConnectedEnrollmentError.explicitSendRequired
+        }
+        try commitPhoneCorrection(result, snapshot: snapshot)
+    }
+
+    private func commitPhoneCorrection(_ observation: BConnectedPhoneCorrectionObservation, snapshot: BConnectedCommunityRecord) throws {
+        guard let correction = snapshot.phoneCorrection, let application = snapshot.phoneApplication, let challenge = snapshot.phoneChallenge,
+              try enrollment.progress() == nil else { throw BConnectedEnrollmentError.immutableConflict }
+        try observation.validate(correction: correction)
+        try persistence.transaction { record in
+            guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == correction,
+                  record.session == nil, record.binding == nil, record.intentRetryNotBefore == nil,
+                  record.phoneSignup?.observation?.phoneVerified != true else { throw BConnectedEnrollmentError.immutableConflict }
+            var committed = correction
+            committed.receipt = observation
+            if observation.state == .retiring {
+                record.phoneCorrection = committed
+                return
+            }
+            // Keep a terminal copy of the retired identity and receipt in the encrypted journal.
+            record.retiredPhoneApplications = (record.retiredPhoneApplications ?? []) + [
+                .init(application: application, challenge: challenge, signup: record.phoneSignup, correction: committed)
+            ]
+            record.phoneApplication = .init(phone: correction.replacementPhone, fullName: application.fullName,
+                graduationYear: application.graduationYear, nonce: correction.replacementNonce, createdAtMillis: correction.createdAtMillis)
+            record.phoneChallenge = .init(applicationId: observation.replacementApplicationId, expiresAt: observation.expiresAt!)
+            record.phoneSignup = nil
+            record.phoneCorrection = nil
         }
     }
 
@@ -431,7 +640,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
             throw BConnectedEnrollmentError.invalidInput
         }
         let application = try persistence.transaction { record -> BConnectedCommunityRecord.PhoneApplication in
-            guard record.session == nil, record.phoneChallenge == nil else { throw BConnectedEnrollmentError.immutableConflict }
+            guard record.session == nil, record.phoneChallenge == nil, record.phoneCorrection == nil else { throw BConnectedEnrollmentError.immutableConflict }
             if let frozen = record.phoneApplication { return frozen }
             // Legacy invitation requests with uncertain outcomes cannot be converted into
             // another identity or session by this new flow.
@@ -483,7 +692,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                   record.session == nil, record.phoneSignup?.operationId == nil,
                   record.phoneSignup?.observation?.phoneVerified != true,
                   challenge.expiresAt <= Int(now().timeIntervalSince1970 * 1000),
-                  record.binding == nil, record.intentRetryNotBefore == nil else {
+                  record.binding == nil, record.intentRetryNotBefore == nil, record.phoneCorrection == nil else {
                 throw BConnectedEnrollmentError.immutableConflict
             }
             record.phoneChallenge = nil
@@ -502,7 +711,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         inFlight = true; defer { inFlight = false }
         let snapshot = try persistence.transaction { $0 }
         guard let application = snapshot.phoneApplication, let challenge = snapshot.phoneChallenge,
-              snapshot.session == nil else { throw BConnectedEnrollmentError.approvalBindingRequired }
+              snapshot.session == nil, snapshot.phoneCorrection == nil else { throw BConnectedEnrollmentError.approvalBindingRequired }
         if snapshot.phoneSignup?.operationId == nil {
             let begun: BConnectedPhoneSignupObservation
             do {
@@ -513,7 +722,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                 begun = try await signup.send(.begin, application: application, challenge: challenge, code: nil)
             }
             try persistence.transaction { record in
-                guard record.phoneApplication == application, record.phoneChallenge == challenge,
+                guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == nil,
                       record.phoneSignup?.operationId == nil else { throw BConnectedEnrollmentError.immutableConflict }
                 record.phoneSignup = .init(operationId: begun.operationId, observation: begun, observedAt: now())
             }
@@ -525,7 +734,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         try Task.checkCancellation()
         guard mayDispatch() else { throw CancellationError() }
         try persistence.transaction { record in
-            guard record.phoneApplication == application, record.phoneChallenge == challenge,
+            guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == nil,
                   record.phoneSignup?.operationId == challenge.applicationId,
                   record.phoneSignup?.observation?.phoneVerified != true,
                   record.phoneSignup?.observation?.nextSmsSeconds == 0 else {
@@ -543,7 +752,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
             throw BConnectedEnrollmentError.rejected(.rateLimited, retryAfterSeconds: seconds)
         }
         try persistence.transaction { record in
-            guard record.phoneApplication == application, record.phoneChallenge == challenge,
+            guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == nil,
                   record.phoneSignup?.operationId == sent.operationId else { throw BConnectedEnrollmentError.immutableConflict }
             record.phoneSignup?.observation = sent
             record.phoneSignup?.observedAt = now()
@@ -557,7 +766,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         inFlight = true; defer { inFlight = false }
         let snapshot = try persistence.transaction { $0 }
         guard let application = snapshot.phoneApplication, let challenge = snapshot.phoneChallenge,
-              snapshot.phoneSignup?.operationId == challenge.applicationId,
+              snapshot.phoneCorrection == nil, snapshot.phoneSignup?.operationId == challenge.applicationId,
               snapshot.phoneSignup?.observation?.phoneVerified != true,
               snapshot.phoneSignup?.observation?.nextCheckSeconds == 0 else {
             throw BConnectedEnrollmentError.operationRequired
@@ -569,7 +778,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
             throw BConnectedEnrollmentError.rejected(.rateLimited, retryAfterSeconds: seconds)
         }
         try persistence.transaction { record in
-            guard record.phoneApplication == application, record.phoneChallenge == challenge,
+            guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == nil,
                   record.phoneSignup?.operationId == checked.operationId else { throw BConnectedEnrollmentError.immutableConflict }
             record.phoneSignup?.observation = checked
             record.phoneSignup?.observedAt = now()
@@ -583,14 +792,14 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         inFlight = true; defer { inFlight = false }
         let snapshot = try persistence.transaction { $0 }
         guard let application = snapshot.phoneApplication, let challenge = snapshot.phoneChallenge,
-              snapshot.session == nil else { throw BConnectedEnrollmentError.operationRequired }
+              snapshot.session == nil, snapshot.phoneCorrection == nil else { throw BConnectedEnrollmentError.operationRequired }
         let status: BConnectedPhoneSignupObservation
         do { status = try await signup.send(.status, application: application, challenge: challenge, code: nil) }
         catch BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil) where snapshot.phoneSignup?.operationId == nil {
             return // Never BEGIN or send a text as a consequence of a status read.
         }
         try persistence.transaction { record in
-            guard record.phoneApplication == application, record.phoneChallenge == challenge,
+            guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == nil,
                   record.phoneSignup?.operationId == nil || record.phoneSignup?.operationId == status.operationId else {
                 throw BConnectedEnrollmentError.immutableConflict
             }
@@ -630,7 +839,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                 throw BConnectedEnrollmentError.invalidResponse
             }
             try persistence.transaction { record in
-                guard record.phoneApplication == application, record.phoneChallenge == challenge,
+                guard record.phoneApplication == application, record.phoneChallenge == challenge, record.phoneCorrection == nil,
                       record.phoneSignup?.observation?.phoneVerified == true,
                       record.session == nil else { throw BConnectedEnrollmentError.immutableConflict }
                 record.session = session

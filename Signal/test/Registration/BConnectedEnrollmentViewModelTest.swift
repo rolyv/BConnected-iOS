@@ -47,6 +47,69 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
     }
 
     @MainActor
+    func testRetiringPhoneCorrectionFinishesOnForegroundWithoutSendingUntilExplicitAction() async {
+        let (model, community, _) = fixture(member: false)
+        community.verified = false; community.allowsCorrection = true; community.finishesCorrection = false
+        model.setActive(true); await settle(model)
+        model.preparePhoneCorrection(); model.correctionPhone = "+447700900123"
+        XCTAssertTrue(model.submitPhoneCorrection())
+        await settle(model)
+        XCTAssertEqual(model.screen, .correctingPhone)
+        XCTAssertEqual(community.savedPhone, "+13055550123")
+        XCTAssertEqual(community.sends, 0)
+        model.setActive(false)
+        community.finishesCorrection = true
+        model.setActive(true); await settle(model)
+        XCTAssertEqual(community.savedPhone, "+447700900123")
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertEqual(community.correctionCalls, 1)
+        XCTAssertEqual(community.correctionReads, 1)
+        XCTAssertEqual(community.sends, 0)
+        XCTAssertTrue(model.canSend)
+        model.sendCode(); await settle(model)
+        XCTAssertEqual(community.sends, 1)
+    }
+
+    @MainActor
+    func testBackgroundDuringPhoneCorrectionDropsOriginalSendAuthorization() async {
+        let (model, community, _) = fixture(member: false)
+        community.verified = false; community.allowsCorrection = true
+        model.setActive(true); await settle(model)
+        var releaseCorrection: CheckedContinuation<Void, Never>?
+        community.beforeCorrection = { await withCheckedContinuation { releaseCorrection = $0 } }
+        model.preparePhoneCorrection(); model.correctionPhone = "+447700900123"
+        XCTAssertTrue(model.submitPhoneCorrection())
+        for _ in 0..<500 { if releaseCorrection != nil { break }; await Task.yield() }
+        XCTAssertNotNil(releaseCorrection)
+        model.setActive(false); model.setActive(true)
+        releaseCorrection?.resume(); await settle(model)
+        XCTAssertEqual(community.savedPhone, "+447700900123")
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertEqual(community.sends, 0)
+        XCTAssertTrue(model.canSend)
+    }
+
+    @MainActor
+    func testExpiredUnverifiedAttemptCanExplicitlyRenewSameNumberAndSendOnce() async {
+        let (model, community, _) = fixture(member: false)
+        community.verified = false; community.allowsCorrection = true
+        community.beforePhoneRefresh = { throw BConnectedEnrollmentError.rejected(.enrollmentExpired, retryAfterSeconds: nil) }
+        model.setActive(true); await settle(model)
+        XCTAssertEqual(model.screen, .help)
+        XCTAssertTrue(model.phoneSetupExpired)
+        XCTAssertTrue(model.canCorrectPhone)
+        community.beforePhoneRefresh = nil
+        model.preparePhoneCorrection()
+        XCTAssertTrue(model.submitPhoneCorrection())
+        await settle(model)
+        XCTAssertEqual(community.savedPhone, "+13055550123")
+        XCTAssertEqual(community.correctionCalls, 1)
+        XCTAssertEqual(community.sends, 1)
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertFalse(model.phoneSetupExpired)
+    }
+
+    @MainActor
     func testPendingAndDeclinedUseFreshServerDecision() async {
         for status: BConnectedCommunityMember.Status in [.pending, .rejected, .suspended] {
             let (model, community, account) = fixture()
@@ -208,6 +271,44 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         XCTAssertTrue(model.hasSavedSetup)
         XCTAssertEqual(community.sends, 0)
         controller.beginAppearanceTransition(false, animated: false); controller.endAppearanceTransition()
+    }
+
+    @MainActor
+    func testAdaptedCorrectionSheetCanSubmitWhileBackgroundAndRemovalStillCancel() async {
+        final class AdaptedSheetHost: BConnectedEnrollmentViewController {
+            var sheet: UIViewController?
+            var leaving = false
+            override var presentedViewController: UIViewController? { sheet }
+            override var isMovingFromParent: Bool { leaving }
+        }
+        let (model, community, _) = fixture(member: false)
+        community.verified = false; community.allowsCorrection = true
+        let notifications = NotificationCenter()
+        let controller = AdaptedSheetHost(model: model, notificationCenter: notifications, applicationIsActive: { true })
+        controller.beginAppearanceTransition(true, animated: false); controller.endAppearanceTransition()
+        await settle(model)
+        controller.sheet = UIViewController()
+        controller.viewWillDisappear(false) // UIKit hides the presenter for an adapted full-screen sheet.
+        model.preparePhoneCorrection(); model.correctionPhone = "+447700900123"
+        XCTAssertTrue(model.submitPhoneCorrection(), "A foreground correction sheet must retain its working submit action")
+        await settle(model)
+        XCTAssertEqual(community.sends, 1)
+
+        model.code = "123456"
+        notifications.post(name: UIApplication.willResignActiveNotification, object: nil)
+        XCTAssertEqual(model.code, "")
+        XCTAssertFalse(model.canSend)
+        XCTAssertFalse(model.submitPhoneCorrection())
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await settle(model)
+        controller.leaving = true
+        controller.viewWillDisappear(false)
+        let reads = community.phoneReads
+        notifications.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await settle(model)
+        XCTAssertEqual(community.phoneReads, reads)
+        XCTAssertFalse(model.canSend)
+        XCTAssertEqual(community.sends, 1)
     }
 
     @MainActor
@@ -606,6 +707,8 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
                 member = .init(id: "member", fullName: application.name, graduationYear: application.year, status: decision)
             }
         }
+        func correctPhone(_ replacementPhone: String) async throws { throw BConnectedEnrollmentError.unavailable }
+        func refreshPhoneCorrection() async throws { throw BConnectedEnrollmentError.unavailable }
         func refreshApproval() async throws {
             guard verified, let member else { throw BConnectedEnrollmentError.approvalBindingRequired }
             calls.append("approval")
@@ -630,19 +733,38 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         var beforePhoneRefresh: (() async throws -> Void)?
         var checkError: BConnectedEnrollmentError?
         var observedAt: Date?
+        var savedPhone = "+13055550123"
+        var allowsCorrection = false, finishesCorrection = true, hasPhoneOperation = true
+        var correctingReplacement: String?
+        var correctionCalls = 0, correctionReads = 0
+        var beforeCorrection: (() async -> Void)?
         func progress() throws -> BConnectedCommunityProgress {
             if unreadable { throw BConnectedEnrollmentError.persistenceUnavailable }
-            return .init(member: hasMember ? .init(id: "member", fullName: "José Pérez", graduationYear: 2008, status: status) : nil,
-                applicationOutcomeUncertain: false, savedApplicationPhone: "+13055550123", savedApplicationName: "José Pérez", savedApplicationYear: 2008,
-                phoneSignup: .init(hasChallenge: true, hasOperation: true, phoneVerified: verified, smsOutcomeNeedsExplicitDecision: false, nextSmsSeconds: smsSeconds, nextCheckSeconds: checkSeconds, observedAt: observedAt ?? Date()),
+            var result = BConnectedCommunityProgress(member: hasMember ? .init(id: "member", fullName: "José Pérez", graduationYear: 2008, status: status) : nil,
+                applicationOutcomeUncertain: false, savedApplicationPhone: savedPhone, savedApplicationName: "José Pérez", savedApplicationYear: 2008,
+                phoneSignup: .init(hasChallenge: true, hasOperation: hasPhoneOperation, phoneVerified: verified, smsOutcomeNeedsExplicitDecision: false, nextSmsSeconds: smsSeconds, nextCheckSeconds: checkSeconds, observedAt: observedAt ?? Date()),
                 canRestartPhoneSetup: false, intentOutcomeUncertain: intentWait != nil, intentRetryNotBefore: intentWait)
+            result.canCorrectPhone = allowsCorrection && !verified && correctingReplacement == nil
+            result.phoneCorrection = correctingReplacement.map { .init(replacementPhone: $0, retiring: true) }
+            return result
         }
         func draft() throws -> BConnectedSignupDraft? { nil }
         func saveDraft(_ draft: BConnectedSignupDraft) throws {}
         func applyPhone(name: String, year: Int, phone: String) async throws {}
-        func sendPhoneCode(explicitlyResendAfterUncertainOutcome: Bool, mayDispatch: () -> Bool) async throws { if mayDispatch() { sends += 1 } }
+        func sendPhoneCode(explicitlyResendAfterUncertainOutcome: Bool, mayDispatch: () -> Bool) async throws { if mayDispatch() { sends += 1; hasPhoneOperation = true } }
         func checkPhoneCode(_ code: String) async throws { if let checkError { throw checkError }; verified = true }
         func refreshPhoneVerification() async throws { phoneReads += 1; try await beforePhoneRefresh?() }
+        func correctPhone(_ replacementPhone: String) async throws {
+            correctionCalls += 1; correctingReplacement = replacementPhone
+            await beforeCorrection?()
+            finishCorrectionIfReady()
+        }
+        func refreshPhoneCorrection() async throws { correctionReads += 1; finishCorrectionIfReady() }
+        private func finishCorrectionIfReady() {
+            if finishesCorrection, let correctingReplacement {
+                savedPhone = correctingReplacement; self.correctingReplacement = nil; hasPhoneOperation = false
+            }
+        }
         func refreshApproval() async throws { approvalReads += 1; status = freshStatus }
         func connectApprovedMembership(preparation: () async throws -> BConnectedEnrollmentPreparation, explicitlyRetryLostIntent: Bool) async throws { intentRetries.append(explicitlyRetryLostIntent); intentWait = nil }
     }

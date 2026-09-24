@@ -8,7 +8,7 @@ import Network
 import libPhoneNumber_iOS
 
 /// Owned enrollment has no escape into legacy registration, linking, or recovery.
-final class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollmentView> {
+class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollmentView> {
     private let pathMonitor = NWPathMonitor()
     private let model: BConnectedEnrollmentViewModel
     private let notificationCenter: NotificationCenter
@@ -52,7 +52,13 @@ final class BConnectedEnrollmentViewController: UIHostingController<BConnectedEn
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        // A normal help/country sheet overlays this controller without making it disappear.
+        // Compact landscape can adapt our sheet to full screen and hide its presenter.
+        // Its controls still drive signup, so keep that foreground presentation active.
+        // Background notifications and actual navigation/removal always cancel intent.
+        let ownsModal = presentedViewController != nil || navigationController?.presentedViewController != nil
+        let remainsTop = navigationController.map { $0.topViewController === self } ?? true
+        let isLeaving = isBeingDismissed || isMovingFromParent || navigationController?.isBeingDismissed == true || navigationController?.isMovingFromParent == true
+        if ownsModal && remainsTop && !isLeaving { return }
         isVisible = false
         forwardActivity()
     }
@@ -112,6 +118,8 @@ struct BConnectedEnrollmentView: View {
     @State private var countrySheet = false
     @State private var helpSheet = false
     @State private var correctionSheet = false
+    @State private var correctionCountrySheet = false
+    @State private var correctionPhoneFocused = false
     @State private var confirmResend = false
     @State private var phoneFocused = false
     @State private var previousField: BConnectedEnrollmentViewModel.Field?
@@ -283,7 +291,7 @@ struct BConnectedEnrollmentView: View {
     }
     private var verification: some View {
         Group {
-            Button { field = nil; correctionSheet = true } label: {
+            Button { field = nil; model.preparePhoneCorrection(); correctionSheet = true } label: {
                 Label("Edit number", systemImage: "chevron.left").font(.body).frame(minHeight: 44)
             }.disabled(model.busy)
             Text("One quick check").font(.subheadline.weight(.semibold)).foregroundStyle(SignupStyle.secondary)
@@ -321,12 +329,14 @@ struct BConnectedEnrollmentView: View {
 
     private var showsOfflineSetup: Bool {
         !model.isOnline && model.hasSavedSetup && !model.stateUnreadable
-            && [.returning, .resolvingMembership, .settingUp, .continuation].contains(model.screen)
+            && [.returning, .correctingPhone, .resolvingMembership, .settingUp, .continuation].contains(model.screen)
     }
     private var title: String {
         if showsOfflineSetup { return "You’re offline." }
+        if model.screen == .help && model.phoneSetupExpired && model.canCorrectPhone { return "Let’s verify your number again." }
         switch model.screen {
         case .returning: return "Welcome back."
+        case .correctingPhone: return "Updating your number."
         case .resolvingMembership: return "One quick check."
         case .pending: return "You’re on the list for review."
         case .settingUp: return model.slow ? "Taking a little longer." : "Making room for you."
@@ -339,8 +349,12 @@ struct BConnectedEnrollmentView: View {
     }
     private var detail: String {
         if showsOfflineSetup { return "Your progress is saved. We’ll check where you left off when you’re connected again." }
+        if model.screen == .help && model.phoneSetupExpired && model.canCorrectPhone {
+            return "Your previous verification expired. Your name and graduation year are saved. Confirm your number to request a new code."
+        }
         switch model.screen {
         case .returning: return "We’re checking where you left off."
+        case .correctingPhone: return "Your name and graduation year stay saved. We’re finishing your number update before a new code can be requested."
         case .resolvingMembership: return "We’re checking your membership."
         case .pending: return "An alumni administrator will review your details. Your place is saved."
         case .settingUp: return model.slow ? "We’re still getting your account ready. You can close the app and come back." : "We’re getting your account ready. This usually takes a moment."
@@ -366,6 +380,9 @@ struct BConnectedEnrollmentView: View {
                 if !model.isOnline { notice("You’re offline. We’ll check when you reconnect.") }
                 else if let message = model.message { notice(message) }
                 helpButton
+            } else if model.screen == .help && model.phoneSetupExpired && model.canCorrectPhone {
+                primary("Confirm phone number", disabled: !model.isOnline) { model.preparePhoneCorrection(); correctionSheet = true }
+                helpButton
             } else if [.declined, .accessPaused, .help].contains(model.screen) {
                 primary("Contact the alumni team") { helpSheet = true }
             } else if !model.isOnline {
@@ -376,7 +393,7 @@ struct BConnectedEnrollmentView: View {
                 primary("Continue setup", disabled: !model.canContinue) { model.continueSetup() }
                 helpButton
             } else {
-                status(model.screen == .returning ? "Resuming your signup…" : model.screen == .resolvingMembership ? "Checking your membership…" : model.slow ? "Your progress is saved" : "Finishing setup…", spinning: !model.slow)
+                status(model.screen == .returning ? "Resuming your signup…" : model.screen == .correctingPhone ? "Updating your number…" : model.screen == .resolvingMembership ? "Checking your membership…" : model.slow ? "Your progress is saved" : "Finishing setup…", spinning: !model.slow)
                 if model.slow { helpButton }
             }
         }
@@ -417,12 +434,56 @@ struct BConnectedEnrollmentView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     heading("Edit your number")
-                    secondary("Your number has already been submitted. The alumni team can help correct it safely. Your name and graduation year stay saved.")
-                    // Release gate: no server supersession contract exists. Never edit the immutable journal.
-                    primary("Contact the alumni team") { correctionSheet = false; openURL(URL(string: "mailto:alumni@belenjesuit.org")!) }
+                    if model.canCorrectPhone {
+                        secondary("We’ll send a code to your updated number. Your name and graduation year stay saved.")
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Phone number").font(.footnote.weight(.semibold))
+                            Button {
+                                correctionPhoneFocused = false; query = ""; correctionCountrySheet = true
+                            } label: {
+                                HStack {
+                                    Text(PhoneNumberUtil.countryName(fromCountryCode: model.correctionRegion))
+                                    Spacer()
+                                    Text("+\(SSKEnvironment.shared.phoneNumberUtilRef.getCallingCode(forRegion: model.correctionRegion))")
+                                    Image(systemName: "chevron.down")
+                                }.frame(minHeight: 44)
+                            }.accessibilityLabel("Country or region, \(PhoneNumberUtil.countryName(fromCountryCode: model.correctionRegion)), plus \(SSKEnvironment.shared.phoneNumberUtilRef.getCallingCode(forRegion: model.correctionRegion))")
+                            inputSurface(SignupPhoneField(text: $model.correctionPhone, region: $model.correctionRegion,
+                                wantsFocus: correctionPhoneFocused, onFocus: { correctionPhoneFocused = true },
+                                onBlur: { correctionPhoneFocused = false }, onNext: { correctionPhoneFocused = false })
+                                .frame(minHeight: max(30, UIFont.preferredFont(forTextStyle: .body).lineHeight)))
+                            if let error = model.correctionError { notice(error) }
+                        }
+                        if !model.isOnline { notice("You’re offline. Connect to the internet, then continue.") }
+                        primary("Send code to this number", disabled: !model.isOnline) {
+                            correctionPhoneFocused = false
+                            if model.submitPhoneCorrection() { correctionSheet = false }
+                        }
+                    } else {
+                        secondary("The alumni team can help with this number. Your saved signup will stay intact.")
+                        primary("Contact the alumni team") { correctionSheet = false; openURL(URL(string: "mailto:alumni@belenjesuit.org")!) }
+                    }
                 }.padding(24)
             }.background(SignupStyle.background).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { correctionSheet = false } } }
+                .sheet(isPresented: $correctionCountrySheet) { correctionCountryPicker }
         }.navigationViewStyle(.stack)
+    }
+    private var correctionCountryPicker: some View {
+        NavigationView {
+            List(countries, id: \.self) { region in
+                Button {
+                    model.correctionRegion = region; correctionCountrySheet = false
+                } label: {
+                    HStack {
+                        Text(PhoneNumberUtil.countryName(fromCountryCode: region))
+                        Spacer()
+                        Text("+\(SSKEnvironment.shared.phoneNumberUtilRef.getCallingCode(forRegion: region))")
+                    }.frame(minHeight: 44)
+                }
+            }.searchable(text: $query, prompt: "Country, region, or calling code")
+                .navigationTitle("Country or region").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { correctionCountrySheet = false } } }
+        }
     }
     private var countryPicker: some View {
         NavigationView {

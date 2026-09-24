@@ -3,6 +3,7 @@
 import Foundation
 import Combine
 import SignalServiceKit
+import libPhoneNumber_iOS
 
 @MainActor
 protocol BConnectedSignupCommunity: AnyObject {
@@ -13,6 +14,8 @@ protocol BConnectedSignupCommunity: AnyObject {
     func sendPhoneCode(explicitlyResendAfterUncertainOutcome: Bool, mayDispatch: () -> Bool) async throws
     func checkPhoneCode(_ code: String) async throws
     func refreshPhoneVerification() async throws
+    func correctPhone(_ replacementPhone: String) async throws
+    func refreshPhoneCorrection() async throws
     func refreshApproval() async throws
     func connectApprovedMembership(preparation: () async throws -> BConnectedEnrollmentPreparation, explicitlyRetryLostIntent: Bool) async throws
 }
@@ -35,7 +38,7 @@ extension BConnectedEnrollmentCoordinator: BConnectedSignupAccount {}
 /// All network effects enter through one main-actor task. Foreground/status/timers do not grant retries.
 @MainActor
 final class BConnectedEnrollmentViewModel: ObservableObject {
-    enum Screen: Equatable { case details, verifying, returning, resolvingMembership, pending, settingUp, continuation, help, declined, accessPaused, ready }
+    enum Screen: Equatable { case details, verifying, returning, correctingPhone, resolvingMembership, pending, settingUp, continuation, help, declined, accessPaused, ready }
     enum Field: Hashable { case phone, name, year, code }
     @Published private(set) var screen: Screen = .details
     @Published private(set) var busy = false
@@ -47,6 +50,9 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     @Published var name = ""
     @Published var year = ""
     @Published var code = ""
+    @Published var correctionPhone = ""
+    @Published var correctionRegion = "US"
+    @Published private(set) var correctionError: String?
     @Published private(set) var errors: [Field: String] = [:]
     @Published private(set) var invalidField: Field?
     @Published private(set) var isOnline = true
@@ -54,6 +60,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     @Published private(set) var clock = Date()
     @Published private(set) var stateUnreadable = false
     @Published private(set) var codeExpired = false
+    @Published private(set) var phoneSetupExpired = false
     private var community: (any BConnectedSignupCommunity)?
     private var coordinator: (any BConnectedSignupAccount)?
     private let makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)?
@@ -120,6 +127,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     var memberYear: String { communityProgress?.member.map { String($0.graduationYear) } ?? year }
     var phoneDestination: String { communityProgress?.savedApplicationPhone.map { PhoneNumber.bestEffortLocalizedPhoneNumber(e164: $0) } ?? phone }
     var uncertainSMS: Bool { communityProgress?.phoneSignup?.smsOutcomeNeedsExplicitDecision == true }
+    var canCorrectPhone: Bool { !busy && !stateUnreadable && communityProgress?.canCorrectPhone == true }
     var canSend: Bool { active && isOnline && !busy && freshPhoneObservation && communityProgress?.phoneSignup?.phoneVerified != true && communityProgress?.phoneSignup?.nextSmsSeconds == 0 }
     var canCheck: Bool { active && isOnline && !busy && !codeExpired && freshPhoneObservation && communityProgress?.phoneSignup?.hasOperation == true && communityProgress?.phoneSignup?.phoneVerified != true && communityProgress?.phoneSignup?.nextCheckSeconds == 0 }
     private var continuationNotBefore: Date? { [communityProgress?.intentRetryNotBefore, requestRetryNotBefore].compactMap { $0 }.max() }
@@ -269,6 +277,50 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         run { try await self.reconcileAndDrive(explicitRetry: true) }
     }
 
+    func preparePhoneCorrection() {
+        guard canCorrectPhone else { return }
+        correctionPhone = communityProgress?.savedApplicationPhone ?? phone
+        correctionRegion = region
+        let utility = PhoneNumberUtil()
+        if let parsed = BConnectedPhoneEntry.parse(correctionPhone, region: correctionRegion),
+           let national = utility.formattedNationalNumber(for: parsed) {
+            let metadata = NBPhoneNumberUtil(metadataHelper: NBMetadataHelper())
+            if let detected = metadata?.getRegionCode(for: parsed.nbPhoneNumber), detected != "ZZ", detected != "001" {
+                correctionRegion = detected
+            } else if let code = parsed.getCallingCode(), utility.getCallingCode(forRegion: correctionRegion) != code,
+                      let primary = utility.getFilteredRegionCodeForCallingCode(code) {
+                correctionRegion = primary
+            }
+            correctionPhone = national
+        }
+        correctionError = nil
+    }
+
+    @discardableResult
+    func submitPhoneCorrection() -> Bool {
+        guard active, isOnline, canCorrectPhone, let community else { return false }
+        guard let replacement = BConnectedPhoneEntry.parse(correctionPhone, region: correctionRegion)?.e164 else {
+            correctionError = correctionPhone.isEmpty ? "Enter your phone number." : "Check the number and country code."
+            return false
+        }
+        correctionError = nil; code = ""; errors[.code] = nil; freshPhoneObservation = false; polls = 0
+        run {
+            self.screen = .correctingPhone; self.message = nil
+            try await community.correctPhone(replacement)
+            try self.reload(); try self.checkActive()
+            guard self.communityProgress?.phoneCorrection == nil else { return }
+            self.phone = self.communityProgress?.savedApplicationPhone ?? replacement
+            self.region = self.correctionRegion; self.codeExpired = false; self.phoneSetupExpired = false
+            // Only this still-active explicit “Send code to this number” action authorizes
+            // one send. A restored/status-only correction can never reach this branch.
+            self.screen = .verifying; self.message = "Sending your code…"
+            try await community.sendPhoneCode(explicitlyResendAfterUncertainOutcome: false, mayDispatch: { self.active && self.isOnline && !Task.isCancelled })
+            try self.reload(); self.message = nil
+            try await self.reconcileAndDrive(explicitRetry: false)
+        }
+        return true
+    }
+
     private func run(_ action: @escaping @MainActor () async throws -> Void) {
         guard active, isOnline, !busy, !stateUnreadable, community != nil, coordinator != nil, !completed else { return }
         busy = true; startedAt = Date(); nextPoll = nil
@@ -288,6 +340,16 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     private func reconcileAndDrive(explicitRetry: Bool) async throws {
         guard let community, let coordinator else { return }
         try reload(); try checkActive()
+        if let correction = communityProgress?.phoneCorrection {
+            screen = .correctingPhone; freshPhoneObservation = false
+            if explicitRetry { try await community.correctPhone(correction.replacementPhone) }
+            else { try await community.refreshPhoneCorrection() }
+            try reload(); try checkActive()
+            guard communityProgress?.phoneCorrection == nil else { return }
+            phone = communityProgress?.savedApplicationPhone ?? phone
+            codeExpired = false; phoneSetupExpired = false; errors[.code] = nil; code = ""
+            message = "Your number is ready. Send a code when you’re ready to continue."
+        }
         if communityProgress?.applicationOutcomeUncertain == true {
             guard let phone = communityProgress?.savedApplicationPhone, let name = communityProgress?.savedApplicationName,
                   let year = communityProgress?.savedApplicationYear else { screen = .help; return }
@@ -295,7 +357,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             try await community.applyPhone(name: name, year: year, phone: phone)
             try reload(); try checkActive()
         }
-        guard communityProgress?.canRestartPhoneSetup != true else { screen = .help; return }
+        guard communityProgress?.canRestartPhoneSetup != true else { phoneSetupExpired = true; screen = .help; return }
         if communityProgress?.phoneSignup != nil && communityProgress?.member == nil {
             screen = communityProgress?.phoneSignup?.phoneVerified == true ? .resolvingMembership : .verifying
             try await community.refreshPhoneVerification()
@@ -369,7 +431,8 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         } else if case BConnectedEnrollmentError.rejected(.rateLimited, _) = error {
             freshPhoneObservation = false
             message = "Please wait before trying again. We’ll check when you can continue."
-            if communityProgress?.member?.status == .pending { screen = .pending }
+            if communityProgress?.phoneCorrection != nil { screen = .correctingPhone }
+            else if communityProgress?.member?.status == .pending { screen = .pending }
             else if communityProgress?.member == nil {
                 screen = communityProgress?.phoneSignup?.phoneVerified == true ? .resolvingMembership : .verifying
             } else { screen = .continuation }
@@ -377,8 +440,12 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             screen = .details; errors[.phone] = "This number can’t be used right now. Check it or contact the alumni team."
         } else if let error = error as? BConnectedEnrollmentError, [.invalidInput, .invalidResponse, .immutableConflict, .persistenceUnavailable, .uncertainPreKeyPublication].contains(error) {
             stateUnreadable = error == .persistenceUnavailable; screen = .help
-        } else if case BConnectedEnrollmentError.rejected(let reason, _) = error, [.invalidCredentials, .enrollmentExpired, .enrollmentConflict, .enrollmentUnavailable].contains(reason) {
+        } else if case BConnectedEnrollmentError.rejected(let reason, _) = error, [.invalidRequest, .invalidCredentials, .enrollmentExpired, .enrollmentConflict, .enrollmentUnavailable].contains(reason) {
+            phoneSetupExpired = reason == .enrollmentExpired && communityProgress?.canCorrectPhone == true
             screen = .help
+        } else if communityProgress?.phoneCorrection != nil {
+            screen = (error as? BConnectedEnrollmentError) == .explicitSendRequired ? .continuation : .correctingPhone
+            message = "Your number update is saved. We’ll check it before continuing."
         } else if communityProgress?.member?.status == .pending {
             screen = .pending; message = "We couldn’t check for an update. Your request is still saved."
         } else if communityProgress?.phoneSignup != nil && communityProgress?.member == nil {
@@ -395,8 +462,8 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             nextPoll = max(now.addingTimeInterval(30), requestRetryNotBefore ?? .distantPast)
             return
         }
-        guard [.verifying, .resolvingMembership, .settingUp].contains(screen), polls < 4 else {
-            if screen == .settingUp || screen == .resolvingMembership { screen = .continuation }
+        guard [.verifying, .correctingPhone, .resolvingMembership, .settingUp].contains(screen), polls < 4 else {
+            if screen == .settingUp || screen == .resolvingMembership || screen == .correctingPhone { screen = .continuation }
             return
         }
         let waits: [TimeInterval] = [2, 5, 10, 20]

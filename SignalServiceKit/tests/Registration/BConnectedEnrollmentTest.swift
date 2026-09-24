@@ -1403,6 +1403,173 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func testPhoneCorrectionBeforeBeginKeepsOriginalReceiptAndNameWithoutSending() async throws {
+        let store = CommunityStore(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: MemoryStore(), client: Sender())
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "José Pérez", year: 2008, phone: phone)
+        let original = try store.load()
+        XCTAssertTrue(try community.progress().canCorrectPhone)
+        try await community.correctPhone("+447700900123")
+        let updated = try store.load()
+        XCTAssertEqual(updated.phoneApplication?.phone, "+447700900123")
+        XCTAssertEqual(updated.phoneApplication?.fullName, original.phoneApplication?.fullName)
+        XCTAssertEqual(updated.phoneApplication?.graduationYear, original.phoneApplication?.graduationYear)
+        XCTAssertNotEqual(updated.phoneApplication?.nonce, original.phoneApplication?.nonce)
+        XCTAssertEqual(updated.retiredPhoneApplications?.first?.application, original.phoneApplication)
+        XCTAssertEqual(updated.retiredPhoneApplications?.first?.challenge, original.phoneChallenge)
+        XCTAssertNil(updated.phoneCorrection)
+        XCTAssertNil(updated.phoneSignup)
+        XCTAssertTrue(signup.operations.isEmpty)
+        XCTAssertEqual(signup.correctionStatusOnly, [true, false])
+        var mismatched = updated
+        mismatched.phoneApplication = original.phoneApplication
+        XCTAssertThrowsError(try mismatched.validate(), "The active application must remain bound to the saved replacement receipt")
+    }
+
+    @MainActor
+    func testLostCorrectionResponseRetainsOriginalAndRestoresExactTupleWithoutSMS() async throws {
+        let store = CommunityStore(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: MemoryStore(), client: Sender())
+        var community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        try await community.sendPhoneCode()
+        let original = try store.load()
+        signup.loseCorrectionResponse = true
+        do { try await community.correctPhone("+447700900123"); XCTFail() } catch {}
+        let uncertain = try store.load(), frozen = try XCTUnwrap(try store.load().phoneCorrection)
+        XCTAssertEqual(uncertain.phoneApplication, original.phoneApplication)
+        XCTAssertEqual(uncertain.phoneChallenge, original.phoneChallenge)
+        XCTAssertEqual(uncertain.phoneSignup, original.phoneSignup)
+        let oldOperations = signup.operations
+        do { try await community.sendPhoneCode(); XCTFail() } catch {}
+        do { try await community.checkPhoneCode("123456"); XCTFail() } catch {}
+        do { try await community.refreshPhoneVerification(); XCTFail() } catch {}
+        XCTAssertEqual(signup.operations, oldOperations, "A pending correction must fence old client send/check/status paths")
+        do { try await community.correctPhone("+34612345678"); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .immutableConflict) }
+        XCTAssertEqual(signup.correctionRequests.count, 2)
+
+        community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        signup.correctionState = .retiring
+        try await community.refreshPhoneCorrection()
+        XCTAssertEqual(try store.load().phoneApplication, original.phoneApplication)
+        XCTAssertEqual(try store.load().phoneCorrection?.receipt?.state, .retiring)
+        signup.correctionState = .ready
+        try await community.refreshPhoneCorrection()
+        let ready = try store.load()
+        XCTAssertEqual(ready.phoneApplication?.nonce, frozen.replacementNonce)
+        XCTAssertEqual(ready.retiredPhoneApplications?.count, 1)
+        XCTAssertEqual(ready.retiredPhoneApplications?.first?.signup, original.phoneSignup)
+        XCTAssertTrue(signup.correctionRequests.allSatisfy { $0.correctionId == frozen.correctionId && $0.replacementNonce == frozen.replacementNonce && $0.replacementPhone == frozen.replacementPhone })
+        XCTAssertTrue(signup.correctionApplications.allSatisfy { $0 == original.phoneApplication })
+        XCTAssertEqual(signup.correctionStatusOnly, [true, false, true, true])
+        XCTAssertEqual(signup.operations.filter { $0 == .sendCode }.count, 1)
+    }
+
+    @MainActor
+    func testMissingCorrectionOnReturnRequiresExplicitSameTupleReplay() async throws {
+        let store = CommunityStore(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: MemoryStore(), client: Sender())
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        signup.failBeforeCorrection = true
+        do { try await community.correctPhone(phone); XCTFail() } catch {}
+        let frozen = try XCTUnwrap(try store.load().phoneCorrection)
+        do { try await community.refreshPhoneCorrection(); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .explicitSendRequired) }
+        XCTAssertEqual(signup.correctionStatusOnly, [true, false, true])
+        XCTAssertEqual(try store.load().phoneCorrection, frozen)
+        signup.failBeforeCorrection = false
+        try await community.correctPhone(phone)
+        XCTAssertEqual(signup.correctionStatusOnly, [true, false, true, true, false])
+        XCTAssertTrue(signup.correctionRequests.allSatisfy { $0 == frozen })
+        XCTAssertEqual(try store.load().phoneApplication?.phone, phone)
+        XCTAssertTrue(signup.operations.isEmpty)
+    }
+
+    @MainActor
+    func testPhoneCorrectionRejectsProofAndNativeMaterialAndRetainsState() async throws {
+        for proofExists in [false, true] {
+            let store = CommunityStore(), signup = PhoneSignupSender(), keys = MemoryStore()
+            let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: Sender())
+            let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+            try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+            if proofExists {
+                try store.transaction { record in
+                    let id = record.phoneChallenge!.applicationId
+                    record.phoneSignup = .init(operationId: id, observation: .init(operationId: id, phoneVerified: true,
+                        nextSmsSeconds: nil, nextCheckSeconds: nil, expiresInSeconds: 600))
+                }
+            } else { _ = try enrollment.prepare(input()) }
+            let original = try store.load()
+            XCTAssertFalse(try community.progress().canCorrectPhone)
+            do { try await community.correctPhone("+447700900123"); XCTFail() }
+            catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .immutableConflict) }
+            XCTAssertEqual(try store.load().phoneApplication, original.phoneApplication)
+            XCTAssertNil(try store.load().phoneCorrection)
+            XCTAssertTrue(signup.correctionRequests.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testCorrectionReadyCommitFailureRecoversOnceAndRejectsLateNativeMaterial() async throws {
+        for insertNativeMaterial in [false, true] {
+            let store = CommunityStore(), signup = PhoneSignupSender(), keys = MemoryStore()
+            let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: Sender())
+            let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+            try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+            let original = try store.load()
+            signup.beforeCorrectionResponse = {
+                if insertNativeMaterial { _ = try enrollment.prepare(self.input()) }
+                else { store.failCommit = true }
+            }
+            do { try await community.correctPhone("+447700900123"); XCTFail() } catch {}
+            store.failCommit = false; signup.beforeCorrectionResponse = nil
+            XCTAssertEqual(try store.load().phoneApplication, original.phoneApplication)
+            XCTAssertNotNil(try store.load().phoneCorrection)
+            XCTAssertNil(try store.load().retiredPhoneApplications)
+            if !insertNativeMaterial {
+                try await community.refreshPhoneCorrection()
+                XCTAssertEqual(try store.load().retiredPhoneApplications?.count, 1)
+                XCTAssertEqual(try store.load().phoneApplication?.phone, "+447700900123")
+            } else {
+                do { try await community.refreshPhoneCorrection(); XCTFail() }
+                catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .immutableConflict) }
+            }
+            XCTAssertTrue(signup.operations.isEmpty)
+        }
+    }
+
+    func testPhoneCorrectionWireBindsReceiptAndRejectsChangedReplacement() async throws {
+        let http = CommunityHTTP()
+        let client = BConnectedPhoneSignupClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid")!), http: http)
+        let application = BConnectedCommunityRecord.PhoneApplication(phone: phone, fullName: "Fixture", graduationYear: 2003, nonce: challenge, createdAtMillis: nil)
+        var correction = BConnectedCommunityRecord.PhoneCorrection(correctionId: "00000000-0000-4000-8000-000000000020", originalApplicationId: operationId,
+            replacementPhone: "+447700900123", replacementNonce: BConnectedEnrollmentWire.base64url(Data(repeating: 9, count: 32)), createdAtMillis: 1_900_000_000_000)
+        var body: [String: Any] = ["correctionId": correction.correctionId, "originalApplicationId": operationId,
+            "replacementApplicationId": "00000000-0000-4000-8000-000000000030", "state": "retiring", "expiresAt": NSNull(), "registrationAuthorized": false]
+        http.response = (try BConnectedEnrollmentWire.encode(body), 202)
+        correction.receipt = try await client.correct(correction, application: application, statusOnly: false)
+        XCTAssertEqual(http.requests.last?.url?.path, "/v1/bconnected/signup/\(operationId)/supersede")
+        XCTAssertEqual(Set(try BConnectedEnrollmentWire.object(http.requests.last!.httpBody!).keys),
+            ["applicationId", "enrollmentNonce", "phoneNumber", "correctionId", "replacementPhoneNumber", "replacementEnrollmentNonce"])
+        let sent = http.requests.last!.httpBody
+        body["state"] = "replacement_ready"; body["expiresAt"] = 1_900_001_800_000
+        http.response = (try BConnectedEnrollmentWire.encode(body), 200)
+        _ = try await client.correct(correction, application: application, statusOnly: true)
+        XCTAssertEqual(http.requests.last?.url?.path, "/v1/bconnected/signup/\(operationId)/supersession-status")
+        XCTAssertEqual(http.requests.last?.httpBody, sent)
+        for mutation: [String: Any] in [["replacementApplicationId": "00000000-0000-4000-8000-000000000040"],
+            ["correctionId": operationId], ["originalApplicationId": correction.correctionId], ["registrationAuthorized": true],
+            ["expiresAt": NSNull()], ["extra": true]] {
+            http.response = (try BConnectedEnrollmentWire.encode(body.merging(mutation) { _, new in new }), 200)
+            do { _ = try await client.correct(correction, application: application, statusOnly: true); XCTFail() }
+            catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
+        }
+    }
+
+    @MainActor
     func testBackgroundBeforeDispatchDoesNotSendAndReturnOnlyReads() async throws {
         let store = CommunityStore(), signup = PhoneSignupSender()
         let enrollment = BConnectedEnrollmentCoordinator(persistence: MemoryStore(), client: Sender())
@@ -1791,6 +1958,27 @@ private final class PhoneSignupSender: BConnectedPhoneSignupSending {
     var phoneVerified = false
     var nextSmsSeconds: Int? = 0
     var nextCheckSeconds: Int? = 0
+    var correctionRequests: [BConnectedCommunityRecord.PhoneCorrection] = []
+    var correctionApplications: [BConnectedCommunityRecord.PhoneApplication] = []
+    var correctionStatusOnly: [Bool] = []
+    var correctionLedger: [String: String] = [:]
+    var correctionState: BConnectedPhoneCorrectionObservation.State = .ready
+    var loseCorrectionResponse = false, failBeforeCorrection = false
+    var beforeCorrectionResponse: (() throws -> Void)?
+    func correct(_ correction: BConnectedCommunityRecord.PhoneCorrection, application: BConnectedCommunityRecord.PhoneApplication,
+                 statusOnly: Bool) async throws -> BConnectedPhoneCorrectionObservation {
+        correctionRequests.append(correction); correctionApplications.append(application); correctionStatusOnly.append(statusOnly)
+        if correctionLedger[correction.correctionId] == nil {
+            if statusOnly { throw BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil) }
+            if failBeforeCorrection { throw BConnectedEnrollmentError.unavailable }
+            correctionLedger[correction.correctionId] = UUID().uuidString.lowercased()
+        }
+        if !statusOnly && loseCorrectionResponse { throw BConnectedEnrollmentError.unavailable }
+        try beforeCorrectionResponse?()
+        return .init(correctionId: correction.correctionId, originalApplicationId: correction.originalApplicationId,
+            replacementApplicationId: correctionLedger[correction.correctionId]!, state: correctionState,
+            expiresAt: correctionState == .ready ? 1_900_001_800_000 : nil)
+    }
     func send(_ operation: BConnectedPhoneSignupOperation, application: BConnectedCommunityRecord.PhoneApplication,
               challenge: BConnectedCommunityRecord.PhoneChallenge, code: String?) async throws -> BConnectedPhoneSignupObservation {
         operations.append(operation)
