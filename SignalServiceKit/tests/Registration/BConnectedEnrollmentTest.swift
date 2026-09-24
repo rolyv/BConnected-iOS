@@ -1386,6 +1386,89 @@ final class BConnectedEnrollmentTest: XCTestCase, @unchecked Sendable {
         catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .unavailable) }
     }
 
+    @MainActor
+    func testSignupDraftIsSeparateFromFrozenApplicationAndSurvivesReload() async throws {
+        let store = CommunityStore(), keys = MemoryStore(), service = CommunitySender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: keys, client: Sender())
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: service, enrollment: enrollment)
+        let draft = BConnectedSignupDraft(phone: "305", region: "US", name: "José", year: "2008")
+        try community.saveDraft(draft)
+        XCTAssertEqual(try community.draft(), draft)
+        XCTAssertNil(try community.progress().savedApplicationPhone)
+        try await community.applyPhone(name: "José", year: 2008, phone: phone)
+        try community.saveDraft(.init(phone: "+447700900123", name: "Changed"))
+        XCTAssertNil(try community.draft())
+        XCTAssertEqual(try community.progress().savedApplicationPhone, phone)
+        XCTAssertEqual(try community.progress().savedApplicationName, "José")
+    }
+
+    @MainActor
+    func testBackgroundBeforeDispatchDoesNotSendAndReturnOnlyReads() async throws {
+        let store = CommunityStore(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: MemoryStore(), client: Sender())
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        do { try await community.sendPhoneCode(mayDispatch: { false }); XCTFail() }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(signup.operations, [.status, .begin])
+        try await community.refreshPhoneVerification()
+        XCTAssertEqual(signup.operations, [.status, .begin, .status])
+        XCTAssertNotNil(try community.progress().phoneSignup?.observedAt)
+    }
+
+    @MainActor
+    func testReturnRecoversLostBeginWithoutSending() async throws {
+        let store = CommunityStore(), signup = PhoneSignupSender()
+        let enrollment = BConnectedEnrollmentCoordinator(persistence: MemoryStore(), client: Sender())
+        let community = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        try await community.applyPhone(name: "Fixture", year: 2003, phone: phone)
+        signup.failOn = .begin
+        do { try await community.sendPhoneCode(); XCTFail() } catch {}
+        signup.failOn = nil
+        let restored = BConnectedCommunityEnrollmentCoordinator(persistence: store, client: CommunitySender(), signup: signup, enrollment: enrollment)
+        try await restored.refreshPhoneVerification()
+        XCTAssertEqual(signup.operations, [.status, .begin, .status])
+        XCTAssertTrue(try restored.progress().phoneSignup!.hasOperation)
+        XCTAssertTrue(try restored.progress().phoneSignup!.smsOutcomeNeedsExplicitDecision)
+    }
+
+    func testSignupOwnedErrorsAreTypedButProxyResponsesNeverAuthorizeBegin() async throws {
+        let http = CommunityHTTP()
+        let client = BConnectedPhoneSignupClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid")!), http: http)
+        let application = BConnectedCommunityRecord.PhoneApplication(phone: phone, fullName: "Fixture", graduationYear: 2003, nonce: challenge, createdAtMillis: nil)
+        let receipt = BConnectedCommunityRecord.PhoneChallenge(applicationId: operationId, expiresAt: 1_900_000_000_000)
+        for (status, code): (Int, BConnectedEnrollmentError.Code) in [(422, .codeNotAccepted), (429, .rateLimited), (410, .enrollmentExpired), (401, .invalidCredentials)] {
+            http.response = (try BConnectedEnrollmentWire.encode(["code": code.rawValue, "retryAfterSeconds": 45]), status)
+            do { _ = try await client.send(.checkCode, application: application, challenge: receipt, code: "123456"); XCTFail() }
+            catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .rejected(code, retryAfterSeconds: 45)) }
+        }
+        for body: [String: Any] in [["code": "ENROLLMENT_UNAVAILABLE", "retryAfterSeconds": NSNull()], ["error": "not found"]] {
+            http.response = (try BConnectedEnrollmentWire.encode(body), 404)
+            do { _ = try await client.send(.status, application: application, challenge: receipt, code: nil); XCTFail() }
+            catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .unavailable) }
+        }
+    }
+
+    func testSignupExpiredCodeIsAcceptedOnlyForOwnedCheckCodeEnvelope() async throws {
+        let http = CommunityHTTP()
+        let client = BConnectedPhoneSignupClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid")!), http: http)
+        let application = BConnectedCommunityRecord.PhoneApplication(phone: phone, fullName: "Fixture", graduationYear: 2003, nonce: challenge, createdAtMillis: nil)
+        let receipt = BConnectedCommunityRecord.PhoneChallenge(applicationId: operationId, expiresAt: 1_900_000_000_000)
+        http.response = (try BConnectedEnrollmentWire.encode(["code": "CODE_EXPIRED"]), 422)
+        do { _ = try await client.send(.checkCode, application: application, challenge: receipt, code: "123456"); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .rejected(.codeExpired, retryAfterSeconds: nil)) }
+        for operation: BConnectedPhoneSignupOperation in [.status, .sendCode, .begin] {
+            do { _ = try await client.send(operation, application: application, challenge: receipt, code: nil); XCTFail() }
+            catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
+        }
+        http.response = (try BConnectedEnrollmentWire.encode(["code": "CODE_EXPIRED", "retryAfterSeconds": 0]), 422)
+        do { _ = try await client.send(.checkCode, application: application, challenge: receipt, code: "123456"); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
+        http.response = (try BConnectedEnrollmentWire.encode(["code": "CODE_EXPIRED"]), 503)
+        do { _ = try await client.send(.checkCode, application: application, challenge: receipt, code: "123456"); XCTFail() }
+        catch { XCTAssertEqual(error as? BConnectedEnrollmentError, .invalidResponse) }
+    }
+
     func testSignupClientExactPreMembershipRoutesAndStrictVerificationOnlyResponse() async throws {
         let http = CommunityHTTP()
         let client = BConnectedPhoneSignupClient(endpoint: try .init(origin: URL(string: "https://enrollment.example.invalid")!), http: http)

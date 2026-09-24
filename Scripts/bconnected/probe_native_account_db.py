@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--simulator", required=True, help="UUID of an already booted dedicated simulator")
+    parser.add_argument("--products", type=Path, default=ROOT / ".build/CompileValidation/Build/Products/Debug-iphonesimulator", help="Products from a completed simulator build")
     parser.add_argument("--probe", choices=["native-account", "http-services", "local-account", "account-attributes", "file-recovery", "cryptographic-inputs", "group-avatar-form", "group-manifest"], default="native-account")
     parser.add_argument("--group-public-params-file", type=Path, help="Public-only binary parameters file for cryptographic-inputs; never a server configuration or private key")
     parser.add_argument("--public-authorities-file", type=Path, help="Optional public-only JSON with senderTrustRoot and senderCertificate; never a private key")
@@ -29,7 +30,7 @@ def main():
         parser.error("Only cryptographic-inputs requires --group-public-params-file")
     if args.public_authorities_file is not None and args.probe != "cryptographic-inputs":
         parser.error("Public authorities are only supported by cryptographic-inputs")
-    products = ROOT / ".build/CompileValidation/Build/Products/Debug-iphonesimulator"
+    products = args.products.resolve()
     sdk = subprocess.check_output(["xcrun", "--sdk", "iphonesimulator", "--show-sdk-path"], text=True).strip()
     # Simulator processes cannot reliably read macOS-protected Documents folders.
     with tempfile.TemporaryDirectory(prefix="bconnected-db-probe-", dir="/private/tmp") as temporary:

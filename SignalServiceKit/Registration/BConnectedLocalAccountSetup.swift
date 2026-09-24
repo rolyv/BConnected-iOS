@@ -5,8 +5,8 @@ import GRDB
 import CryptoKit
 import LibSignalClient
 
-/// First-install self-recipient preparation only. No merging, profile mutation, caches, completion
-/// callbacks, block clearing, storage service, networking, or registration-state publication.
+/// First-install recipient, entropy, and encrypted profile preparation. The submitted signup name
+/// may seed the first profile; no caches, callbacks, networking, or readiness publication escape.
 enum BConnectedLocalAccountSetup {
     /// The same SQLCipher transaction checks the frozen journal before and after native validation.
     /// Only completed journals may enter the existing read-only native repeat paths.
@@ -59,8 +59,37 @@ enum BConnectedLocalAccountSetup {
         // Because an entropy receipt exists, this validates native, profile, recipient and key state
         // without generating keys or writing. Existing blocks and all unrelated state are preserved.
         try prepareAccountEntropy(tx: tx, accountKeyStore: accountKeyStore, validateNative: validateNative)
-        guard let profile = OWSUserProfile.getUserProfileForLocalUser(tx: tx), let key = profile.profileKey else {
+        guard var profile = OWSUserProfile.getUserProfileForLocalUser(tx: tx), let key = profile.profileKey else {
             throw BConnectedEnrollmentError.immutableConflict
+        }
+        // Seed the first encrypted publication from the immutable community application.
+        // Existing publications are never rewritten: their saved bytes and state hash remain authoritative.
+        if record.publication == nil,
+           let communityBytes = KeyValueStore(collection: "BConnectedCommunityEnrollment.v1").getData("session", transaction: tx) {
+            let community = try JSONDecoder().decode(BConnectedCommunityRecord.self, from: communityBytes)
+            try community.validate()
+            if let application = community.phoneApplication {
+                guard application.phone == record.phone, community.phoneSignup?.observation?.phoneVerified == true,
+                      let session = community.session, session.member.status == .approved,
+                      let binding = community.binding, let accountBinding = record.binding,
+                      session.member.id == accountBinding.memberId,
+                      binding.memberId == accountBinding.memberId,
+                      binding.bindingChallenge == accountBinding.challenge,
+                      let parsed = OWSUserProfile.NameComponent.parse(truncating: application.fullName),
+                      !parsed.didTruncate, parsed.nameComponent.stringValue.rawValue == application.fullName else {
+                    throw BConnectedEnrollmentError.immutableConflict
+                }
+                // A full display name occupies the given-name slot without guessing name boundaries.
+                // This transaction has no profile caches, notifications, or remote writes.
+                // The generic upsert also invokes searchable-name indexing hooks. Use the same
+                // local-only SQL pattern as initial recipient preparation so nothing escapes rollback.
+                try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = ?, familyName = NULL WHERE uniqueId = ?",
+                    arguments: [application.fullName, profile.uniqueId])
+                guard let seeded = OWSUserProfile.getUserProfileForLocalUser(tx: tx),
+                      seeded.givenName == application.fullName, seeded.familyName == nil,
+                      seeded.profileKey?.keyData == key.keyData else { throw BConnectedEnrollmentError.immutableConflict }
+                profile = seeded
+            }
         }
         let state: [String: Any] = ["key": key.keyData.base64EncodedString(), "given": profile.givenName as Any? ?? NSNull(),
             "family": profile.familyName as Any? ?? NSNull(), "bio": profile.bio as Any? ?? NSNull(),
@@ -74,9 +103,19 @@ enum BConnectedLocalAccountSetup {
         }
         let aci = Aci(fromUUID: UUID(uuidString: account.aci)!)
         let profileKey = try ProfileKey(contents: key.keyData)
-        let given = profile.givenName.flatMap(OWSUserProfile.NameComponent.init(truncating:))
-        let family = profile.familyName.flatMap(OWSUserProfile.NameComponent.init(truncating:))
-        guard (profile.givenName == nil || given != nil), (family == nil || given != nil) else { throw BConnectedEnrollmentError.invalidInput }
+        func exactName(_ value: String?) throws -> OWSUserProfile.NameComponent? {
+            guard let value else { return nil }
+            // Freezing a truncated name would hash one value while publishing another. A NUL
+            // would be decoded as the component separator. Reject both before saving any payload.
+            guard !value.utf8.contains(0), let parsed = OWSUserProfile.NameComponent.parse(truncating: value),
+                  !parsed.didTruncate, parsed.nameComponent.stringValue.rawValue == value else {
+                throw BConnectedEnrollmentError.invalidInput
+            }
+            return parsed.nameComponent
+        }
+        let given = try exactName(profile.givenName)
+        let family = try exactName(profile.familyName)
+        guard family == nil || given != nil else { throw BConnectedEnrollmentError.invalidInput }
         let name = try given.map { try OWSUserProfile.encrypt(givenName: $0, familyName: family, profileKey: key) }
         func encrypted(_ value: String?, lengths: [Int]) throws -> ProfileValue? {
             guard let value, !value.isEmpty else { return nil }

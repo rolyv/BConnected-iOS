@@ -399,17 +399,11 @@ public class ChatListViewController: OWSViewController, HomeTabViewController {
     // MARK: UI Components -
 
     private lazy var emptyChatListView: UIView = {
-        let titleLabel = UILabel.explanationTextLabel(text: NSLocalizedString(
-            "CHAT_LIST_NO_CHATS_TITLE",
-            comment: "Message shown in the chat list when the chat list is empty.",
-        ))
+        let titleLabel = UILabel.explanationTextLabel(text: "A familiar connection starts here.")
         titleLabel.font = .dynamicTypeTitle3.semibold()
         titleLabel.adjustsFontForContentSizeCategory = true
 
-        let subtitleLabel = UILabel.explanationTextLabel(text: NSLocalizedString(
-            "CHAT_LIST_NO_CHATS_SUBTITLE",
-            comment: "Message shown in the chat list when the chat list is empty.",
-        ))
+        let subtitleLabel = UILabel.explanationTextLabel(text: "Your conversations with fellow Belen alumni will appear here.")
         subtitleLabel.adjustsFontForContentSizeCategory = true
 
         let textStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])

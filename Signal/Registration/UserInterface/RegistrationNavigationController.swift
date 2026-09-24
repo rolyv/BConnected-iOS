@@ -204,6 +204,7 @@ public class RegistrationNavigationController: OWSNavigationController {
                     onCompleted: { [weak self] in
                         guard let self else { return }
                         self.pushNextController(Guarantee.wrapAsync { await self.coordinator.nextStep() })
+                        UIAccessibility.post(notification: .announcement, argument: "You’re ready to connect")
                     }
                 )
             }, update: nil)

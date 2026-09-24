@@ -25,9 +25,11 @@ class LoadingViewController: UIViewController {
 
     override func loadView() {
         self.view = UIView()
-        view.backgroundColor = Theme.launchScreenBackgroundColor
+        view.backgroundColor = UIColor(named: "BConnectedSignupBackground") ?? Theme.launchScreenBackgroundColor
 
         self.logoView = UIImageView(image: UIImage(imageLiteralResourceName: "bconnected-launch-logo"))
+        logoView.contentMode = .scaleAspectFit
+        logoView.isAccessibilityElement = false
         view.addSubview(logoView)
 
         logoView.autoCenterInSuperview()
@@ -36,7 +38,7 @@ class LoadingViewController: UIViewController {
         self.topLabel = buildLabel()
         topLabel.isHiddenInStackView = true
         topLabel.font = UIFont.dynamicTypeTitle2
-        topLabel.text = OWSLocalizedString("DATABASE_VIEW_OVERLAY_TITLE", comment: "Title shown while the app is updating its database.")
+        topLabel.text = "Opening BConnected Chat…"
         labelStack.addArrangedSubview(topLabel)
 
         self.bottomLabel = buildLabel()
@@ -127,7 +129,7 @@ class LoadingViewController: UIViewController {
 
         // We only show the "loading" UI if it's a slow launch. Otherwise this ViewController
         // should be indistinguishable from the launch screen.
-        let kTopLabelThreshold: TimeInterval = 5
+        let kTopLabelThreshold: TimeInterval = 0.4
         topLabelTimer = Timer.scheduledTimer(withTimeInterval: kTopLabelThreshold, repeats: false) { [weak self] _ in
             self?.showTopLabel()
         }
@@ -168,7 +170,8 @@ class LoadingViewController: UIViewController {
     private func showTopLabel() {
         topLabel.layer.removeAllAnimations()
         topLabel.isHiddenInStackView = false
-        topLabel.alpha = 0.2
+        topLabel.alpha = 1
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
         UIView.animate(withDuration: 0.9, delay: 0, options: [.autoreverse, .repeat, .curveEaseInOut], animations: {
             self.topLabel.alpha = 1.0
         }, completion: nil)
@@ -214,13 +217,14 @@ class LoadingViewController: UIViewController {
 
     @objc
     private func themeDidChange() {
-        view.backgroundColor = Theme.launchScreenBackgroundColor
+        view.backgroundColor = UIColor(named: "BConnectedSignupBackground") ?? Theme.launchScreenBackgroundColor
     }
 
     private var progress: OWSProgress?
 
     func updateProgress(_ progress: OWSProgress) {
         self.progress = progress
+        topLabel.text = OWSLocalizedString("DATABASE_VIEW_OVERLAY_TITLE", comment: "Title shown while the app is updating its database.")
         let percentComplete = progress.percentComplete
         let unitCountToComplete = progress.totalUnitCount
         let unitCountCompleted = Int(Float(unitCountToComplete) * progress.percentComplete)

@@ -16,7 +16,7 @@ public enum BConnectedEnrollmentError: Error, Equatable {
     public enum Code: String, Codable {
         case invalidRequest = "INVALID_REQUEST", invalidCredentials = "INVALID_CREDENTIALS"
         case enrollmentUnavailable = "ENROLLMENT_UNAVAILABLE", enrollmentConflict = "ENROLLMENT_CONFLICT"
-        case enrollmentExpired = "ENROLLMENT_EXPIRED", codeNotAccepted = "CODE_NOT_ACCEPTED"
+        case enrollmentExpired = "ENROLLMENT_EXPIRED", codeNotAccepted = "CODE_NOT_ACCEPTED", codeExpired = "CODE_EXPIRED"
         case rateLimited = "RATE_LIMITED", temporarilyUnavailable = "TEMPORARILY_UNAVAILABLE"
     }
 }

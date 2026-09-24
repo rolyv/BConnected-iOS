@@ -11,6 +11,17 @@ public struct BConnectedCommunityMember: Codable, Equatable {
     public let status: Status
 }
 
+/// An editable draft in the encrypted application database; never an application or authorization.
+public struct BConnectedSignupDraft: Codable, Equatable {
+    public var phone: String
+    public var region: String
+    public var name: String
+    public var year: String
+    public init(phone: String = "", region: String = "US", name: String = "", year: String = "") {
+        self.phone = phone; self.region = region; self.name = name; self.year = year
+    }
+}
+
 public struct BConnectedCommunityProgress {
     public let member: BConnectedCommunityMember?
     public let applicationOutcomeUncertain: Bool
@@ -30,6 +41,8 @@ public struct BConnectedPhoneSignupProgress {
     public let smsOutcomeNeedsExplicitDecision: Bool
     public let nextSmsSeconds: Int?
     public let nextCheckSeconds: Int?
+    /// Receipt time is durable. An elapsed deadline only schedules a fresh status read.
+    public let observedAt: Date?
 }
 
 public struct BConnectedPhoneSignupObservation: Codable, Equatable {
@@ -62,7 +75,9 @@ struct BConnectedCommunityRecord: Codable, CustomStringConvertible, CustomDebugS
         var operationId: String?
         var observation: BConnectedPhoneSignupObservation?
         var sendNeedsExplicitDecision = false
+        var observedAt: Date?
     }
+    var draft: BConnectedSignupDraft?
     var version = 1
     var applicationDispatched = false
     var phoneApplication: PhoneApplication?
@@ -281,7 +296,29 @@ final class BConnectedPhoneSignupClient: BConnectedPhoneSignupSending {
             // Any other response is ambiguous and must not authorize BEGIN or an SMS.
             throw BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil)
         }
-        guard status == 200 else { throw BConnectedEnrollmentError.unavailable }
+        if status != 200 {
+            // Only the exact missing-operation envelope above can authorize a later BEGIN.
+            if operation == .status && status == 404 { throw BConnectedEnrollmentError.unavailable }
+            guard let root = try? BConnectedEnrollmentWire.fields(BConnectedEnrollmentWire.object(data), required: ["code"], optional: ["retryAfterSeconds"]),
+                  let raw = root["code"] as? String, let code = BConnectedEnrollmentError.Code(rawValue: raw) else {
+                throw BConnectedEnrollmentError.unavailable
+            }
+            let statuses: [BConnectedEnrollmentError.Code: Int] = [.invalidRequest: 400, .invalidCredentials: 401,
+                .enrollmentUnavailable: 404, .enrollmentConflict: 409, .enrollmentExpired: 410,
+                .codeNotAccepted: 422, .codeExpired: 422, .rateLimited: 429, .temporarilyUnavailable: 503]
+            guard statuses[code] == status else { throw BConnectedEnrollmentError.invalidResponse }
+            guard code != .codeExpired || (operation == .checkCode && Set(root.keys) == ["code"]) else {
+                throw BConnectedEnrollmentError.invalidResponse
+            }
+            let retry: Int?
+            if let value = root["retryAfterSeconds"], !(value is NSNull) {
+                guard let seconds = try? BConnectedEnrollmentWire.integer(value), seconds >= 0 else {
+                    throw BConnectedEnrollmentError.invalidResponse
+                }
+                retry = seconds
+            } else { retry = nil }
+            throw BConnectedEnrollmentError.rejected(code, retryAfterSeconds: retry)
+        }
         do {
             let root = try BConnectedEnrollmentWire.fields(BConnectedEnrollmentWire.object(data),
                 required: ["operationId", "state", "phoneVerified", "nextSmsSeconds", "nextCheckSeconds", "expiresInSeconds", "registrationAuthorized"])
@@ -340,7 +377,8 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                                 phoneVerified: observation?.phoneVerified == true,
                                 smsOutcomeNeedsExplicitDecision: record.phoneSignup?.sendNeedsExplicitDecision == true,
                                 nextSmsSeconds: record.phoneSignup?.operationId == nil ? 0 : observation?.nextSmsSeconds,
-                                nextCheckSeconds: observation?.nextCheckSeconds)
+                                nextCheckSeconds: observation?.nextCheckSeconds,
+                                observedAt: record.phoneSignup?.observedAt)
         } else { phoneSignup = nil }
         return .init(member: record.session?.member,
                      applicationOutcomeUncertain: record.applicationDispatched && record.session == nil && record.phoneChallenge == nil,
@@ -351,6 +389,17 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                      canRestartPhoneSetup: mayRestart,
                      intentOutcomeUncertain: record.intentRetryNotBefore != nil && record.binding == nil,
                      intentRetryNotBefore: record.intentRetryNotBefore)
+    }
+
+    public func draft() throws -> BConnectedSignupDraft? {
+        try persistence.transaction { $0.draft }
+    }
+
+    public func saveDraft(_ draft: BConnectedSignupDraft) throws {
+        try persistence.transaction { record in
+            guard !record.applicationDispatched else { return }
+            record.draft = draft
+        }
     }
 
     public func apply(name: String, year: Int, invitation: String) async throws {
@@ -396,6 +445,7 @@ public final class BConnectedCommunityEnrollmentCoordinator {
                 nonce: BConnectedEnrollmentWire.base64url(Data(random)),
                 createdAtMillis: Int(now().timeIntervalSince1970 * 1000))
             record.phoneApplication = frozen
+            record.draft = nil
             record.applicationDispatched = true
             return frozen
         }
@@ -445,7 +495,8 @@ public final class BConnectedCommunityEnrollmentCoordinator {
 
     /// This first network request creates no member and sends no text message.
     /// The explicit send action below is the only SMS-producing client action.
-    public func sendPhoneCode(explicitlyResendAfterUncertainOutcome: Bool = false) async throws {
+    public func sendPhoneCode(explicitlyResendAfterUncertainOutcome: Bool = false,
+                              mayDispatch: () -> Bool = { true }) async throws {
         guard !inFlight else { throw BConnectedEnrollmentError.busy }
         guard let signup else { throw BConnectedEnrollmentError.unavailable }
         inFlight = true; defer { inFlight = false }
@@ -464,13 +515,15 @@ public final class BConnectedCommunityEnrollmentCoordinator {
             try persistence.transaction { record in
                 guard record.phoneApplication == application, record.phoneChallenge == challenge,
                       record.phoneSignup?.operationId == nil else { throw BConnectedEnrollmentError.immutableConflict }
-                record.phoneSignup = .init(operationId: begun.operationId, observation: begun)
+                record.phoneSignup = .init(operationId: begun.operationId, observation: begun, observedAt: now())
             }
             if begun.phoneVerified {
                 try await pollVerifiedPhoneStatus(application: application, challenge: challenge)
                 return
             }
         }
+        try Task.checkCancellation()
+        guard mayDispatch() else { throw CancellationError() }
         try persistence.transaction { record in
             guard record.phoneApplication == application, record.phoneChallenge == challenge,
                   record.phoneSignup?.operationId == challenge.applicationId,
@@ -483,11 +536,17 @@ public final class BConnectedCommunityEnrollmentCoordinator {
             }
             record.phoneSignup!.sendNeedsExplicitDecision = true
         }
-        let sent = try await signup.send(.sendCode, application: application, challenge: challenge, code: nil)
+        let sent: BConnectedPhoneSignupObservation
+        do { sent = try await signup.send(.sendCode, application: application, challenge: challenge, code: nil) }
+        catch BConnectedEnrollmentError.rejected(.rateLimited, let seconds) {
+            try saveThrottle(seconds, sending: true)
+            throw BConnectedEnrollmentError.rejected(.rateLimited, retryAfterSeconds: seconds)
+        }
         try persistence.transaction { record in
             guard record.phoneApplication == application, record.phoneChallenge == challenge,
                   record.phoneSignup?.operationId == sent.operationId else { throw BConnectedEnrollmentError.immutableConflict }
             record.phoneSignup?.observation = sent
+            record.phoneSignup?.observedAt = now()
             record.phoneSignup?.sendNeedsExplicitDecision = false
         }
     }
@@ -503,11 +562,17 @@ public final class BConnectedCommunityEnrollmentCoordinator {
               snapshot.phoneSignup?.observation?.nextCheckSeconds == 0 else {
             throw BConnectedEnrollmentError.operationRequired
         }
-        let checked = try await signup.send(.checkCode, application: application, challenge: challenge, code: code)
+        let checked: BConnectedPhoneSignupObservation
+        do { checked = try await signup.send(.checkCode, application: application, challenge: challenge, code: code) }
+        catch BConnectedEnrollmentError.rejected(.rateLimited, let seconds) {
+            try saveThrottle(seconds, sending: false)
+            throw BConnectedEnrollmentError.rejected(.rateLimited, retryAfterSeconds: seconds)
+        }
         try persistence.transaction { record in
             guard record.phoneApplication == application, record.phoneChallenge == challenge,
                   record.phoneSignup?.operationId == checked.operationId else { throw BConnectedEnrollmentError.immutableConflict }
             record.phoneSignup?.observation = checked
+            record.phoneSignup?.observedAt = now()
         }
         if checked.phoneVerified { try await pollVerifiedPhoneStatus(application: application, challenge: challenge) }
     }
@@ -518,17 +583,37 @@ public final class BConnectedCommunityEnrollmentCoordinator {
         inFlight = true; defer { inFlight = false }
         let snapshot = try persistence.transaction { $0 }
         guard let application = snapshot.phoneApplication, let challenge = snapshot.phoneChallenge,
-              snapshot.phoneSignup?.operationId == challenge.applicationId,
               snapshot.session == nil else { throw BConnectedEnrollmentError.operationRequired }
-        let status = try await signup.send(.status, application: application, challenge: challenge, code: nil)
+        let status: BConnectedPhoneSignupObservation
+        do { status = try await signup.send(.status, application: application, challenge: challenge, code: nil) }
+        catch BConnectedEnrollmentError.rejected(.enrollmentUnavailable, retryAfterSeconds: nil) where snapshot.phoneSignup?.operationId == nil {
+            return // Never BEGIN or send a text as a consequence of a status read.
+        }
         try persistence.transaction { record in
             guard record.phoneApplication == application, record.phoneChallenge == challenge,
-                  record.phoneSignup?.operationId == status.operationId else { throw BConnectedEnrollmentError.immutableConflict }
+                  record.phoneSignup?.operationId == nil || record.phoneSignup?.operationId == status.operationId else {
+                throw BConnectedEnrollmentError.immutableConflict
+            }
+            if record.phoneSignup == nil {
+                record.phoneSignup = .init(operationId: status.operationId, observation: nil, sendNeedsExplicitDecision: true)
+            }
+            record.phoneSignup?.operationId = status.operationId
             record.phoneSignup?.observation = status
+            record.phoneSignup?.observedAt = now()
             // An uncertain send remains explicit even after a status read. Status does not
             // prove whether an SMS was delivered or grant permission to send another.
         }
         if status.phoneVerified { try await pollVerifiedPhoneStatus(application: application, challenge: challenge) }
+    }
+
+    private func saveThrottle(_ seconds: Int?, sending: Bool) throws {
+        try persistence.transaction { record in
+            guard let observation = record.phoneSignup?.observation else { return }
+            record.phoneSignup?.observation = .init(operationId: observation.operationId, phoneVerified: observation.phoneVerified,
+                nextSmsSeconds: sending ? seconds : observation.nextSmsSeconds,
+                nextCheckSeconds: sending ? observation.nextCheckSeconds : seconds, expiresInSeconds: observation.expiresInSeconds)
+            record.phoneSignup?.observedAt = now()
+        }
     }
 
     private func pollVerifiedPhoneStatus(application: BConnectedCommunityRecord.PhoneApplication,

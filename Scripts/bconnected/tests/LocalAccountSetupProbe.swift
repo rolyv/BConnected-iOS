@@ -357,4 +357,113 @@ for kind in 0..<4 {
 }
 print("PASS changed profile, block, native entropy and authority configuration all reject publication before mutation")
 
-print("15 real local-account/entropy/publication database probe groups passed; no remote service or readiness effects")
+// The submitted full name must survive into the first encrypted profile without splitting,
+// and rollback/retry must preserve the original profile and frozen publication bytes.
+func saveSignup(_ fixture: Fixture, name: String = "José María 李",
+                mutate: (inout BConnectedCommunityRecord) -> Void = { _ in }) throws {
+    let account = try fixture.saved()
+    try fixture.db.writeWithRollbackIfThrows { tx in
+        let applicationId = "00000000-0000-4000-8000-000000000077"
+        let nonce = BConnectedEnrollmentWire.base64url(Data(repeating: 7, count: 32))
+        var community = BConnectedCommunityRecord()
+        community.applicationDispatched = true
+        community.phoneApplication = .init(phone: account.phone, fullName: name, graduationYear: 2008,
+            nonce: nonce, createdAtMillis: nil)
+        community.phoneChallenge = .init(applicationId: applicationId, expiresAt: 1_900_000_000_000)
+        community.phoneSignup = .init(operationId: applicationId,
+            observation: .init(operationId: applicationId, phoneVerified: true, nextSmsSeconds: nil, nextCheckSeconds: nil, expiresInSeconds: 600))
+        community.session = .init(token: nonce, expiresAt: 1_900_000_000_000,
+            member: .init(id: account.binding!.memberId, fullName: name, graduationYear: 2008, status: .approved))
+        community.binding = .init(memberId: account.binding!.memberId,
+            bindingChallenge: account.binding!.challenge, expiresAt: 1_900_000_000_000)
+        mutate(&community)
+        try community.validate()
+        KeyValueStore(collection: "BConnectedCommunityEnrollment.v1").setData(try JSONEncoder().encode(community), key: "session", transaction: tx)
+    }
+}
+
+let signupName = try Fixture()
+try signupName.prepare(); try activate(signupName); try entropy(signupName)
+try saveSignup(signupName)
+do {
+    _ = try signupName.db.writeWithRollbackIfThrows { tx in
+        _ = try publication(signupName, tx: tx)
+        throw Injected.rollback
+    }
+} catch Injected.rollback {}
+signupName.db.read { tx in
+    check(OWSUserProfile.getUserProfileForLocalUser(tx: tx)?.givenName == "Original")
+}
+let namePublication = try publication(signupName)
+let namePayload = try BConnectedEnrollmentWire.object(namePublication.publication!.encryptedProfile)
+let nameKey = try ProfileKey(contents: signupName.key.keyData)
+let displayName = try OWSUserProfile.decrypt(profileNameData: Data(base64Encoded: namePayload["name"] as! String)!, profileKey: nameKey)
+check(displayName.givenName == "José María 李" && displayName.familyName == nil)
+let nameChanges = signupName.changes()
+try check(publication(signupName).publication == namePublication.publication)
+check(signupName.changes() == nameChanges)
+print("PASS signup full name seeds the first encrypted profile without splitting; rollback and exact replay preserve native state and payload")
+
+for kind in 0..<5 {
+    let fixture = try Fixture(); try fixture.prepare(); try activate(fixture); try entropy(fixture)
+    try saveSignup(fixture) { community in
+        switch kind {
+        case 0: community.session = nil; community.binding = nil
+        case 1: community.binding = nil
+        case 2:
+            let otherId = "00000000-0000-4000-8000-000000000099"
+            community.session!.member = .init(id: otherId, fullName: "José María 李", graduationYear: 2008, status: .approved)
+            community.binding = .init(memberId: otherId, bindingChallenge: community.binding!.bindingChallenge, expiresAt: 1_900_000_000_000)
+        case 3:
+            community.binding = .init(memberId: community.binding!.memberId,
+                bindingChallenge: BConnectedEnrollmentWire.base64url(Data(repeating: 9, count: 32)), expiresAt: 1_900_000_000_000)
+        default:
+            community.session!.member = .init(id: community.session!.member.id, fullName: "José María 李", graduationYear: 2008, status: .suspended)
+        }
+    }
+    let before = fixture.changes()
+    do { _ = try publication(fixture); preconditionFailure("unbound or unapproved signup name accepted") }
+    catch BConnectedEnrollmentError.immutableConflict {}
+    check(fixture.changes() == before)
+    try check(fixture.saved().publication == nil)
+    fixture.unchangedProfileAndBarrier()
+}
+print("PASS missing, mismatched and suspended community bindings reject signup profile seeding before mutation")
+
+for name in [String(repeating: "A", count: 26), "李", "محمد", String(repeating: "👩🏽‍🚀", count: 8)] {
+    let fixture = try Fixture(); try fixture.prepare(); try activate(fixture); try entropy(fixture)
+    try saveSignup(fixture, name: name)
+    let saved = try publication(fixture)
+    let payload = try BConnectedEnrollmentWire.object(saved.publication!.encryptedProfile)
+    let decrypted = try OWSUserProfile.decrypt(profileNameData: Data(base64Encoded: payload["name"] as! String)!,
+        profileKey: ProfileKey(contents: fixture.key.keyData))
+    check(decrypted.givenName == name && decrypted.familyName == nil)
+}
+for name in [String(repeating: "A", count: 27), String(repeating: "👩🏽‍🚀", count: 9)] {
+    let fixture = try Fixture(); try fixture.prepare(); try activate(fixture); try entropy(fixture)
+    try saveSignup(fixture, name: name)
+    let before = fixture.changes()
+    do { _ = try publication(fixture); preconditionFailure("incompatible signup name was truncated") }
+    catch BConnectedEnrollmentError.immutableConflict {}
+    check(fixture.changes() == before)
+    try check(fixture.saved().publication == nil)
+    fixture.unchangedProfileAndBarrier()
+}
+print("PASS complete Unicode and boundary-length signup names round-trip while oversized names reject without truncation")
+
+for (caseIndex, (given, family)) in [(String(repeating: "A", count: 27), "Family"),
+                                   ("Given", String(repeating: "B", count: 27)),
+                                   ("Given", " ")].enumerated() {
+    let fixture = try Fixture(); try fixture.prepare(); try activate(fixture); try entropy(fixture)
+    try fixture.db.writeWithRollbackIfThrows { tx in
+        try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = ?, familyName = ?", arguments: [given, family])
+    }
+    let before = fixture.changes()
+    do { _ = try publication(fixture); preconditionFailure("mismatched encrypted profile name case \(caseIndex) was frozen") }
+    catch BConnectedEnrollmentError.invalidInput {}
+    check(fixture.changes() == before)
+    try check(fixture.saved().publication == nil)
+}
+print("PASS first native publication rejects truncated and empty name components without freezing mismatched bytes")
+
+print("19 real local-account/entropy/publication database probe groups passed; no remote service or readiness effects")
