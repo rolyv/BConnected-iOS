@@ -355,9 +355,10 @@ public final class ConversationViewController: OWSViewController {
         self.isViewVisible = true
         self.viewWillAppearForLoad()
 
-        // We should have already requested contact access at this point, so this should be a no-op
-        // unless it ever becomes possible to load this VC without going via the ChatListViewController.
-        SSKEnvironment.shared.contactManagerImplRef.requestSystemContactsOnce()
+        // Directory-based conversations do not need access to the phone's contacts.
+        if DependenciesBridge.shared.libsignalNet.capabilities.allows(.phoneContactDiscovery) {
+            SSKEnvironment.shared.contactManagerImplRef.requestSystemContactsOnce()
+        }
 
         self.updateBarButtonItems()
 
