@@ -10,8 +10,8 @@ OTHER_SWIFT_FLAGS = $(inherited) -warnings-as-errors
 
 // BConnected product version (MAJOR.MINOR.PATCH) and monotonic distribution build.
 // The app and both extensions share these values.
-CURRENT_PROJECT_VERSION = 4
-MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 5
+MARKETING_VERSION = 0.1.1
 
 // Upstream lineage and compatibility version; independent of product releases.
 BCONNECTED_SIGNAL_BASE_VERSION = 8.30.0

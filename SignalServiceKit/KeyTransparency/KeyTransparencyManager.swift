@@ -22,6 +22,7 @@ public final class KeyTransparencyManager {
     private let storageServiceManager: StorageServiceManager
     private let tsAccountManager: TSAccountManager
     private let udManager: OWSUDManager
+    private let transportCapabilities: BConnectedTransportCapabilities
 
     private let taskQueue: KeyedConcurrentTaskQueue<Aci>
 
@@ -38,6 +39,7 @@ public final class KeyTransparencyManager {
         storageServiceManager: StorageServiceManager,
         tsAccountManager: TSAccountManager,
         udManager: OWSUDManager,
+        transportCapabilities: BConnectedTransportCapabilities = .legacy,
     ) {
         self.apiClient = apiClient
         self.dateProvider = dateProvider
@@ -51,6 +53,7 @@ public final class KeyTransparencyManager {
         self.storageServiceManager = storageServiceManager
         self.tsAccountManager = tsAccountManager
         self.udManager = udManager
+        self.transportCapabilities = transportCapabilities
 
         self.taskQueue = KeyedConcurrentTaskQueue(concurrentLimitPerKey: 1)
     }
@@ -58,7 +61,7 @@ public final class KeyTransparencyManager {
     // MARK: Opt-out
 
     public func isEnabled(tx: DBReadTransaction) -> Bool {
-        return keyTransparencyStore.isEnabled(tx: tx)
+        return transportCapabilities.allows(.keyTransparency) && keyTransparencyStore.isEnabled(tx: tx)
     }
 
     public func setIsEnabled(
@@ -66,6 +69,7 @@ public final class KeyTransparencyManager {
         updateStorageService: Bool,
         tx: DBWriteTransaction,
     ) {
+        guard transportCapabilities.allows(.keyTransparency) else { return }
         logger.info("\(value)")
         keyTransparencyStore.setIsEnabled(value, tx: tx)
 
@@ -101,6 +105,7 @@ public final class KeyTransparencyManager {
         localIdentifiers: LocalIdentifiers,
         tx: DBReadTransaction,
     ) -> CheckParams? {
+        guard transportCapabilities.allows(.keyTransparency) else { return nil }
         let logger = logger.suffixed(with: "[\(aci)]")
         logger.info("")
 
@@ -159,6 +164,7 @@ public final class KeyTransparencyManager {
     /// Errors are retried internally. Throwing indicates a non-transient
     /// failure.
     public func performCheck(params: CheckParams) async throws {
+        try transportCapabilities.require(.keyTransparency)
         try await taskQueue.runWithThrowingTask(forKey: params.aciInfo.aci) {
             let logger = logger.suffixed(with: "[\(params.aciInfo.aci)]")
 
@@ -244,6 +250,7 @@ public final class KeyTransparencyManager {
     /// Use `Cron` to periodically perform a Key Transparency validation on the
     /// local user.
     public func registerSelfCheckForCron(cron: Cron) {
+        guard transportCapabilities.allows(.keyTransparency) else { return }
         cron.scheduleFrequently(
             mustBeRegistered: true,
             mustBeConnected: true,
@@ -284,6 +291,7 @@ public final class KeyTransparencyManager {
     /// Perform a one-off self-check on demand, e.g. when triggered manually
     /// from Internal Settings rather than by the scheduled `Cron` job.
     public func performSelfCheckOnDemand() async throws {
+        try transportCapabilities.require(.keyTransparency)
         let registeredState = try tsAccountManager.registeredStateWithMaybeSneakyTransaction()
         logger.info("Running KT self-check on-demand!")
         try await prepareAndPerformSelfCheck(localIdentifiers: registeredState.localIdentifiers)
@@ -365,6 +373,9 @@ public final class KeyTransparencyManager {
     private func prepareAndPerformSelfCheck(
         localIdentifiers: LocalIdentifiers,
     ) async throws {
+        // An unavailable product capability is not a failed identity check.
+        // Reject it before message/storage work or failure-state persistence.
+        try transportCapabilities.require(.keyTransparency)
         do {
             // Self-check also depends on UsernameChangeSyncMessages, so best-
             // effort make sure we've drained our message queue.
@@ -416,6 +427,8 @@ public final class KeyTransparencyManager {
             }
         } catch let error as CancellationError {
             throw error
+        } catch BConnectedTransportError.unavailable(.keyTransparency) {
+            throw BConnectedTransportError.unavailable(.keyTransparency)
         } catch {
             await db.awaitableWrite { tx in
                 recordSelfCheckFailure(tx: tx)

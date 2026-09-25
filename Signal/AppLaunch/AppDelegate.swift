@@ -122,6 +122,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     private var connectedWindowScene: UIWindowScene?
     private var didConfigureGlobalUI = false
+    private var pendingLaunchFailurePresentation: (() -> Void)?
 
     /// Process setup and background-task registration still run once in didFinishLaunching.
     /// Scene connection owns presentation, including the privacy and clock-skew windows.
@@ -135,6 +136,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         } else {
             window.makeKeyAndVisible()
         }
+        presentPendingLaunchFailure()
         return window
     }
 
@@ -1475,7 +1477,26 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
             }
         }
 
-        viewController.presentActionSheet(actionSheet)
+        // Startup preflight runs before UIKit connects the window scene. A
+        // presentation at that point is discarded, leaving only the launch
+        // screen and no way to choose Continue. Retain it until the scene has
+        // attached the window, then present after that connection finishes.
+        pendingLaunchFailurePresentation = { [weak viewController] in
+            viewController?.presentActionSheet(actionSheet)
+        }
+        presentPendingLaunchFailure()
+    }
+
+    private func presentPendingLaunchFailure() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, connectedWindowScene != nil,
+                  let presentation = pendingLaunchFailurePresentation
+            else { return }
+            // Keep it pending if the scene disconnected before this turn.
+            // Multiple scheduled turns may only consume the presentation once.
+            pendingLaunchFailurePresentation = nil
+            presentation()
+        }
     }
 
     // MARK: -

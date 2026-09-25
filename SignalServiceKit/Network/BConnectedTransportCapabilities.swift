@@ -1,5 +1,7 @@
 // Copyright 2026 BConnected contributors. SPDX-License-Identifier: AGPL-3.0-only
 
+import Foundation
+
 /// Application policy, not evidence that a remote service is deployed or reachable.
 public enum BConnectedTransportCapability: String, CaseIterable, Sendable {
     case authenticatedChat
@@ -25,11 +27,31 @@ public enum BConnectedTransportCapability: String, CaseIterable, Sendable {
     case captcha
 }
 
-public enum BConnectedTransportError: Error, Equatable {
+public enum BConnectedTransportError: Error, Equatable, LocalizedError {
     case unavailable(BConnectedTransportCapability)
     case ownedLibsignalUnavailable
     case invalidOwnedConfiguration
     case invalidChatCredentials
+
+    // Message failure persistence uses Error.userErrorDescription. Expected
+    // transport failures must provide user-facing text instead of reaching its
+    // debug assertion for unhandled errors.
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            return NSLocalizedString(
+                "BCONNECTED_FEATURE_UNAVAILABLE",
+                value: "This feature isn’t available in this version of BConnected.",
+                comment: "An operation requires a service unavailable in this version of BConnected.",
+            )
+        case .ownedLibsignalUnavailable, .invalidOwnedConfiguration, .invalidChatCredentials:
+            return NSLocalizedString(
+                "BCONNECTED_CONNECTION_UNAVAILABLE",
+                value: "BConnected can’t connect right now. Please contact the alumni team.",
+                comment: "BConnected cannot establish its configured authenticated connection.",
+            )
+        }
+    }
 }
 
 /// Immutable capabilities. There is no raw-bits initializer or mutable remote-config override.

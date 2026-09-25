@@ -40,12 +40,12 @@ final class RequestMaker {
 
     private let label: String
     private let serviceId: ServiceId
-    private let address: SignalServiceAddress
     private let canUseStoryAuth: Bool
     private let accessKey: OWSUDAccess?
     private let endorsement: GroupSendFullTokenBuilder?
     private let authedAccount: AuthedAccount
     private let options: Options
+    private let performRequest: (TSRequest) async throws -> HTTPResponse
 
     init(
         label: String,
@@ -55,15 +55,18 @@ final class RequestMaker {
         endorsement: GroupSendFullTokenBuilder?,
         authedAccount: AuthedAccount,
         options: Options,
+        performRequest: @escaping (TSRequest) async throws -> HTTPResponse = {
+            try await SSKEnvironment.shared.networkManagerRef.asyncRequest($0)
+        },
     ) {
         self.label = label
         self.serviceId = serviceId
-        self.address = SignalServiceAddress(serviceId)
         self.canUseStoryAuth = canUseStoryAuth
         self.accessKey = accessKey
         self.endorsement = endorsement
         self.authedAccount = authedAccount
         self.options = options
+        self.performRequest = performRequest
     }
 
     private enum SealedSenderAuth {
@@ -144,12 +147,21 @@ final class RequestMaker {
 
     private func _makeRequest(request: TSRequest) async throws -> RequestMakerResult {
         let connectionType = try request.auth.connectionType
-        let networkManager = SSKEnvironment.shared.networkManagerRef
-        let response = try await networkManager.asyncRequest(request)
+        let response = try await performRequest(request)
         return RequestMakerResult(response: response, wasSentByUD: connectionType == .unidentified)
     }
 
     private func requestFailed(error: Error, sealedSenderAuth: SealedSenderAuth?) async throws -> Never {
+        if sealedSenderAuth != nil,
+           !canUseStoryAuth,
+           options.contains(.allowIdentifiedFallback),
+           error as? BConnectedTransportError == .unavailable(.unauthenticatedChat)
+        {
+            // This is a local transport restriction, not an invalid access key.
+            // Use only the fallback this caller authorized, without changing
+            // the recipient's sealed-sender metadata or fetching their profile.
+            throw RequestMakerUDAuthError.udAuthFailure
+        }
         if let sealedSenderAuth, error.httpStatusCode == 401 || error.httpStatusCode == 403 {
             // If an Access Key-authenticated request fails because of a 401/403, we
             // assume the Access Key is wrong.

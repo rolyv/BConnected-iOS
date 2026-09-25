@@ -1514,6 +1514,7 @@
 		7254655B2BA028C400EABFD2 /* OWSSyncManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 885C354F2370DFD50004BA35 /* OWSSyncManager.swift */; };
 		7254655C2BA0293900EABFD2 /* ContactSyncAttachmentBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5096BE642AF3514800668F9F /* ContactSyncAttachmentBuilder.swift */; };
 		7254655D2BA0294100EABFD2 /* ContactOutputStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5096BE682AF37A9900668F9F /* ContactOutputStream.swift */; };
+		BC0E25010000000000000001 /* BConnectedStorageServiceManagerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E25010000000000000002 /* BConnectedStorageServiceManagerTest.swift */; };
 		7254655E2BA032A900EABFD2 /* StorageServiceContactTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505C2EDA29974D2000C23FB2 /* StorageServiceContactTest.swift */; };
 		725465602BA033E200EABFD2 /* UserNotificationsPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D23D0923CEBF4400B0E74B /* UserNotificationsPresenter.swift */; };
 		725465612BA033E200EABFD2 /* NotificationPresenterImpl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88D23D0A23CEBF4400B0E74B /* NotificationPresenterImpl.swift */; };
@@ -3476,6 +3477,7 @@
 		D9F399B02A967664001599EC /* IdentityKeyCheckerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F399AE2A96764A001599EC /* IdentityKeyCheckerTest.swift */; };
 		D9F399B22A96D65D001599EC /* IdentityKeyMismatchManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F399B12A96D65D001599EC /* IdentityKeyMismatchManager.swift */; };
 		D9F399B42A96E54C001599EC /* IdentityKeyMismatchManagerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F399B32A96E54C001599EC /* IdentityKeyMismatchManagerTest.swift */; };
+		BC1D00000000000000000001 /* RegistrationIdMismatchManagerTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1D00000000000000000002 /* RegistrationIdMismatchManagerTest.swift */; };
 		D9F3EDA62F453BC900FE9DC5 /* BackupMediaErrorNotificationPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F3EDA52F453BC900FE9DC5 /* BackupMediaErrorNotificationPresenter.swift */; };
 		D9F6553229D6531D002A330A /* SDSCodableModel+ColumnName.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F6553129D6531D002A330A /* SDSCodableModel+ColumnName.swift */; };
 		D9F6553B29D6547F002A330A /* SDSCodableModelDatabaseInterface+Remove.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F6553529D6547E002A330A /* SDSCodableModelDatabaseInterface+Remove.swift */; };
@@ -5226,6 +5228,7 @@
 		505C2ED32997015800C23FB2 /* LinkDeviceViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkDeviceViewController.swift; sourceTree = "<group>"; };
 		505C2ED529971D4E00C23FB2 /* DeviceLimitExceededError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceLimitExceededError.swift; sourceTree = "<group>"; };
 		505C2ED82997422D00C23FB2 /* SelfSignedIdentityTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelfSignedIdentityTest.swift; sourceTree = "<group>"; };
+		BC0E25010000000000000002 /* BConnectedStorageServiceManagerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedStorageServiceManagerTest.swift; sourceTree = "<group>"; };
 		505C2EDA29974D2000C23FB2 /* StorageServiceContactTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageServiceContactTest.swift; sourceTree = "<group>"; };
 		505CC1662F22BC7A00D311CD /* OutgoingPaymentActivationRequestMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingPaymentActivationRequestMessage.swift; sourceTree = "<group>"; };
 		505CC1682F22C2EC00D311CD /* OutgoingPaymentActivationRequestFinishedMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingPaymentActivationRequestFinishedMessage.swift; sourceTree = "<group>"; };
@@ -7916,6 +7919,7 @@
 		D9F399AE2A96764A001599EC /* IdentityKeyCheckerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityKeyCheckerTest.swift; sourceTree = "<group>"; };
 		D9F399B12A96D65D001599EC /* IdentityKeyMismatchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityKeyMismatchManager.swift; sourceTree = "<group>"; };
 		D9F399B32A96E54C001599EC /* IdentityKeyMismatchManagerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IdentityKeyMismatchManagerTest.swift; sourceTree = "<group>"; };
+		BC1D00000000000000000002 /* RegistrationIdMismatchManagerTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegistrationIdMismatchManagerTest.swift; sourceTree = "<group>"; };
 		D9F3EDA52F453BC900FE9DC5 /* BackupMediaErrorNotificationPresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupMediaErrorNotificationPresenter.swift; sourceTree = "<group>"; };
 		D9F6553129D6531D002A330A /* SDSCodableModel+ColumnName.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SDSCodableModel+ColumnName.swift"; sourceTree = "<group>"; };
 		D9F6553529D6547E002A330A /* SDSCodableModelDatabaseInterface+Remove.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "SDSCodableModelDatabaseInterface+Remove.swift"; sourceTree = "<group>"; };
@@ -11371,6 +11375,7 @@
 		7254655F2BA032C600EABFD2 /* StorageService */ = {
 			isa = PBXGroup;
 			children = (
+				BC0E25010000000000000002 /* BConnectedStorageServiceManagerTest.swift */,
 				505C2EDA29974D2000C23FB2 /* StorageServiceContactTest.swift */,
 			);
 			path = StorageService;
@@ -14874,6 +14879,7 @@
 				50BA9B293049DDF9006DB636 /* AccountEntropyPoolTest.swift */,
 				D9F399AE2A96764A001599EC /* IdentityKeyCheckerTest.swift */,
 				D9F399B32A96E54C001599EC /* IdentityKeyMismatchManagerTest.swift */,
+				BC1D00000000000000000002 /* RegistrationIdMismatchManagerTest.swift */,
 				50D88CA12FDA2B9400C06350 /* MasterKeyTest.swift */,
 				D9CAF7522A0ADA4B0049193A /* PniDistributionParameterBuilderTest.swift */,
 				503158F12B57B0010023A5DB /* ServiceIdTest.swift */,
@@ -20819,6 +20825,7 @@
 				50A0B3D0301015050053607C /* HydratedMessageBodyTest.swift in Sources */,
 				D9F399B02A967664001599EC /* IdentityKeyCheckerTest.swift in Sources */,
 				D9F399B42A96E54C001599EC /* IdentityKeyMismatchManagerTest.swift in Sources */,
+				BC1D00000000000000000001 /* RegistrationIdMismatchManagerTest.swift in Sources */,
 				501631CA2EA03615006F9B0E /* ImageMetadataTest.swift in Sources */,
 				50ED28022F0EDB0B00E57C54 /* ImageQualityTest.swift in Sources */,
 				D9C0AE672BD7162300FCB05E /* InactiveLinkedDeviceFinderTest.swift in Sources */,
@@ -20949,6 +20956,7 @@
 				F94262A2289B1B5600460798 /* SSKBaseTest.swift in Sources */,
 				F942628D289B1B5600460798 /* StickerManagerTest.swift in Sources */,
 				F942628E289B1B5600460798 /* StickerPackInfoTest.swift in Sources */,
+				BC0E25010000000000000001 /* BConnectedStorageServiceManagerTest.swift in Sources */,
 				7254655E2BA032A900EABFD2 /* StorageServiceContactTest.swift in Sources */,
 				884BF73E28D37D5F00D94636 /* StoryManagerTest.swift in Sources */,
 				C14EC1A92BAA4B5F00A4D064 /* StreamTransformTests.swift in Sources */,

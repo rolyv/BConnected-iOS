@@ -140,10 +140,19 @@ public enum StorageServiceManagerManifestRotationMode {
 public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
 
     private let appReadiness: AppReadiness
+    private let transportCapabilities: BConnectedTransportCapabilities
 
-    init(appReadiness: AppReadiness) {
+    init(
+        appReadiness: AppReadiness,
+        transportCapabilities: BConnectedTransportCapabilities = .legacy,
+    ) {
         self.appReadiness = appReadiness
+        self.transportCapabilities = transportCapabilities
         super.init()
+
+        // Unsupported transports must not schedule work that assumes the
+        // Storage Service registration lifecycle has supplied local identities.
+        guard transportCapabilities.allows(.storageService) else { return }
 
         if CurrentAppContext().isMainApp {
             appReadiness.runNowOrWhenAppWillBecomeReady {
@@ -184,6 +193,7 @@ public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
     private static let restoreManifestCronInterval: TimeInterval = .day
 
     public func registerForCron(_ cron: Cron) {
+        guard transportCapabilities.allows(.storageService) else { return }
         cron.schedulePeriodically(
             uniqueKey: Self.restoreManifestCronKey,
             approximateInterval: Self.restoreManifestCronInterval,
@@ -502,6 +512,7 @@ public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
     // MARK: - Pending Mutations
 
     private func updatePendingMutations(block: (inout PendingMutations) -> Void) {
+        guard transportCapabilities.allows(.storageService) else { return }
         updateManagerState { managerState in
             block(&managerState.pendingMutations)
 
@@ -577,6 +588,9 @@ public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
         masterKeySource: StorageService.MasterKeySource,
         isRunningViaCron: Bool,
     ) -> Promise<Void> {
+        guard transportCapabilities.allows(.storageService) else {
+            return Promise(error: BConnectedTransportError.unavailable(.storageService))
+        }
         let (promise, future) = Promise<Void>.pending()
         updateManagerState { managerState in
             var pendingRestore = managerState.pendingRestore ?? .init(
@@ -598,6 +612,7 @@ public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
         mode: ManifestRotationMode,
         authedAccount: AuthedAccount,
     ) async throws {
+        try transportCapabilities.require(.storageService)
         try await withCheckedThrowingContinuation { continuation in
             updateManagerState { managerState in
                 var pendingRotation = managerState.pendingManifestRotation ?? .init(
@@ -616,6 +631,7 @@ public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
     }
 
     public func backupPendingChanges(authedAccount: AuthedAccount) {
+        guard transportCapabilities.allows(.storageService) else { return }
         updateManagerState { managerState in
             var pendingBackup = managerState.pendingBackup ?? .init(authedAccount: .implicit, masterKeySource: .implicit)
             pendingBackup.authedAccount = authedAccount.orIfImplicitUse(pendingBackup.authedAccount)
@@ -629,6 +645,7 @@ public class StorageServiceManagerImpl: NSObject, StorageServiceManager {
     }
 
     public func waitForPendingRestores() async throws {
+        try transportCapabilities.require(.storageService)
         let (promise, future) = Promise<Void>.pending()
         updateManagerState { managerState in
             managerState.pendingRestoreCompletionFutures.append(future)

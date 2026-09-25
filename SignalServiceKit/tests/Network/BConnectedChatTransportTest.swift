@@ -10,6 +10,114 @@ final class BConnectedChatTransportTest: XCTestCase {
     private typealias Capability = BConnectedTransportCapability
     private let chatOnly: Set<Capability> = [.authenticatedChat, .unauthenticatedChat, .provisioning, .chatPreconnect, .networkChange, .stories]
 
+    func testUnavailableAnonymousPrekeyFetchUsesExplicitlyAllowedIdentifiedFallback() async throws {
+        var attempts: [Bool] = []
+        let maker = makeRequestMaker(options: [.allowIdentifiedFallback]) { request in
+            let anonymous = try request.auth.connectionType == .unidentified
+            attempts.append(anonymous)
+            if anonymous { throw BConnectedTransportError.unavailable(.unauthenticatedChat) }
+            return HTTPResponse(requestUrl: request.url, status: 200, headers: HttpHeaders(), bodyData: Data([42]))
+        }
+        let result = try await maker.makeRequest {
+            OWSRequestFactory.recipientPreKeyRequest(serviceId: Aci.constantForTesting("00000000-0000-4000-8000-000000000001"), deviceId: "1", auth: $0)
+        }
+        XCTAssertEqual(attempts, [true, false])
+        XCTAssertFalse(result.wasSentByUD)
+        XCTAssertEqual(result.response.responseBodyData, Data([42]))
+    }
+
+    func testAnonymousFailureNeverWidensAuthWithoutFallbackPermission() async {
+        await assertRequestFailsWithoutFallback(options: [], story: false, error: .unavailable(.unauthenticatedChat))
+        await assertRequestFailsWithoutFallback(options: [], story: true, error: .unavailable(.unauthenticatedChat))
+    }
+
+    func testAvailableAnonymousTransportDoesNotUseIdentifiedFallback() async throws {
+        var attempts: [Bool] = []
+        let maker = makeRequestMaker(options: [.allowIdentifiedFallback]) { request in
+            attempts.append(try request.auth.connectionType == .unidentified)
+            return HTTPResponse(requestUrl: request.url, status: 200, headers: HttpHeaders(), bodyData: nil)
+        }
+        let result = try await maker.makeRequest {
+            OWSRequestFactory.recipientPreKeyRequest(serviceId: Aci.constantForTesting("00000000-0000-4000-8000-000000000001"), deviceId: "1", auth: $0)
+        }
+        XCTAssertEqual(attempts, [true])
+        XCTAssertTrue(result.wasSentByUD)
+    }
+
+    func testOtherTransportFailuresDoNotTriggerIdentifiedFallback() async {
+        for error in [BConnectedTransportError.unavailable(.authenticatedChat), .invalidChatCredentials, .unavailable(.legacyCdn)] {
+            await assertRequestFailsWithoutFallback(options: [.allowIdentifiedFallback], story: false, error: error)
+        }
+    }
+
+    func testRemoteServiceFailureDoesNotTriggerIdentifiedFallback() async {
+        var attempts = 0
+        let maker = makeRequestMaker(options: [.allowIdentifiedFallback]) { request in
+            attempts += 1
+            throw HTTPResponse(requestUrl: request.url, status: 503, headers: HttpHeaders(), bodyData: nil).asError()
+        }
+        do {
+            _ = try await maker.makeRequest {
+                var request = TSRequest(url: URL(string: "v2/keys/fixture/1")!)
+                if let auth = $0 { request.auth = .sealedSender(auth) }
+                return request
+            }
+            XCTFail("Expected the server failure")
+        } catch {
+            XCTAssertEqual(error.httpStatusCode, 503)
+        }
+        XCTAssertEqual(attempts, 1)
+    }
+
+    private func makeRequestMaker(
+        options: RequestMaker.Options,
+        story: Bool = false,
+        performRequest: @escaping (TSRequest) async throws -> HTTPResponse
+    ) -> RequestMaker {
+        RequestMaker(
+            label: "Local capability test",
+            serviceId: Aci.constantForTesting("00000000-0000-4000-8000-000000000001"),
+            canUseStoryAuth: story,
+            accessKey: OWSUDAccess(key: SMKUDAccessKey(profileKey: Aes256Key(data: Data(count: 32))!), mode: .enabled),
+            endorsement: nil,
+            authedAccount: .implicit,
+            options: options,
+            performRequest: performRequest,
+        )
+    }
+
+    private func assertRequestFailsWithoutFallback(options: RequestMaker.Options, story: Bool, error: BConnectedTransportError) async {
+        var attempts = 0
+        let maker = makeRequestMaker(options: options, story: story) { _ in
+            attempts += 1
+            throw error
+        }
+        do {
+            _ = try await maker.makeRequest {
+                var request = TSRequest(url: URL(string: "v2/keys/fixture/1")!, method: "GET", parameters: [:])
+                if let auth = $0 { request.auth = .sealedSender(auth) }
+                return request
+            }
+            XCTFail("Expected the local capability failure")
+        } catch let actual {
+            XCTAssertEqual(actual as? BConnectedTransportError, error)
+        }
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testTransportFailuresCanBePersistedAsUserFacingMessageErrors() throws {
+        let errors = Capability.allCases.map(BConnectedTransportError.unavailable) + [
+            .ownedLibsignalUnavailable, .invalidOwnedConfiguration, .invalidChatCredentials,
+        ]
+        for error in errors {
+            let description = try XCTUnwrap((error as LocalizedError).errorDescription)
+            XCTAssertFalse(description.isEmpty)
+            XCTAssertEqual((error as Error).userErrorDescription, description)
+            XCTAssertEqual((error as NSError).localizedDescription, description)
+            XCTAssertFalse((error as Error).isRetryable)
+        }
+    }
+
     func testChatOnlyPolicyExcludesEveryUnimplementedService() {
         let policy = BConnectedTransportCapabilities.chatOnly
         XCTAssertEqual(Set(Capability.allCases.filter(policy.allows)), chatOnly)

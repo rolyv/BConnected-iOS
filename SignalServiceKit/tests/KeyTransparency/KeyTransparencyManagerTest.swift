@@ -10,13 +10,14 @@ import Testing
 
 @testable import SignalServiceKit
 
+@Suite(.serialized)
 struct KeyTransparencyManagerTest {
     private static let checkFailure = OWSGenericError("Mock check failure.")
 
     private let localIdentifiers = LocalIdentifiers.forUnitTests
 
     private let apiClient = MockKeyTransparencyApiClient()
-    private let db = InMemoryDB()
+    private let db: InMemoryDB
     private let identityManager: MockIdentityManager
     /// A week, deliberately distinct from the 24h interval used to retry after
     /// a failure. The cadence tests below assume this value.
@@ -25,10 +26,16 @@ struct KeyTransparencyManagerTest {
     private let recipientDatabaseTable = RecipientDatabaseTable()
     private let tsAccountManager = MockTSAccountManager()
     private let udManager = OWSMockUDManager()
+    private let storageServiceManager = MockStorageServiceManager()
 
     private let clock = AtomicValue(Date(), lock: .init())
 
     init() {
+        let originalAppContext = CurrentAppContext()
+        SetCurrentAppContext(TestAppContext(), isRunningTests: true)
+        self.db = InMemoryDB()
+        SetCurrentAppContext(originalAppContext, isRunningTests: true)
+
         let recipientFetcher = RecipientFetcher(
             recipientDatabaseTable: recipientDatabaseTable,
             searchableNameIndexer: MockSearchableNameIndexer(),
@@ -53,7 +60,10 @@ struct KeyTransparencyManagerTest {
 
     // MARK: - Helpers
 
-    private func buildManager(isConservativeSelfCheck: Bool = true) -> KeyTransparencyManager {
+    private func buildManager(
+        isConservativeSelfCheck: Bool = true,
+        transportCapabilities: BConnectedTransportCapabilities = .legacy,
+    ) -> KeyTransparencyManager {
         let clock = self.clock
         return KeyTransparencyManager(
             apiClient: apiClient,
@@ -65,9 +75,10 @@ struct KeyTransparencyManagerTest {
             localUsernameManager: localUsernameManager,
             messageProcessor: MockMessageProcessor(),
             recipientDatabaseTable: recipientDatabaseTable,
-            storageServiceManager: MockStorageServiceManager(),
+            storageServiceManager: storageServiceManager,
             tsAccountManager: tsAccountManager,
             udManager: udManager,
+            transportCapabilities: transportCapabilities,
         )
     }
 
@@ -104,6 +115,96 @@ struct KeyTransparencyManagerTest {
     }
 
     // MARK: - Self-check
+
+    @Test
+    func testUnsupportedSelfCheckHasNoNetworkStorageOrFailureStateSideEffects() async {
+        let manager = buildManager(transportCapabilities: .chatOnly)
+        let enabledManager = buildManager()
+        db.write { enabledManager.setIsEnabled(true, updateStorageService: false, tx: $0) }
+        #expect(!db.read { manager.isEnabled(tx: $0) })
+        enqueueSucceedingCheck()
+
+        await #expect(throws: BConnectedTransportError.unavailable(.keyTransparency)) {
+            try await manager.performSelfCheckOnDemand()
+        }
+
+        #expect(apiClient.checkMocks.count == 1)
+        #expect(storageServiceManager.waitCount == 0)
+        #expect(storageServiceManager.restoreCount == 0)
+        #expect(selfCheckState == nil)
+        #expect(isTimeForSelfCheck(at: now))
+    }
+
+    @Test
+    func testUnsupportedSelfCheckDoesNotScheduleCronWork() async throws {
+        let manager = buildManager(transportCapabilities: .chatOnly)
+        let cron = Cron(appVersion: try AppVersionNumber4(AppVersionNumber("8.30.0.5")), db: db)
+        manager.registerSelfCheckForCron(cron: cron)
+        enqueueSucceedingCheck()
+
+        await cron.runOnce(ctx: CronContext(
+            chatConnectionManager: ChatConnectionManagerMock(),
+            tsAccountManager: tsAccountManager,
+        ))
+
+        #expect(apiClient.checkMocks.count == 1)
+        #expect(storageServiceManager.waitCount == 0)
+        #expect(storageServiceManager.restoreCount == 0)
+        #expect(selfCheckState == nil)
+        #expect(isTimeForSelfCheck(at: now))
+    }
+
+    @Test
+    func testUnavailableApiDoesNotBecomeAnIdentityFailureOrRequestStorageRestore() async {
+        let manager = buildManager()
+        apiClient.checkMocks.append { _, _ in
+            throw BConnectedTransportError.unavailable(.keyTransparency)
+        }
+
+        await #expect(throws: BConnectedTransportError.unavailable(.keyTransparency)) {
+            try await manager.performSelfCheckOnDemand()
+        }
+
+        #expect(storageServiceManager.restoreCount == 0)
+        #expect(selfCheckState == nil)
+        #expect(isTimeForSelfCheck(at: now))
+    }
+
+    @Test
+    func testUnsupportedContactChecksRejectEvenPreviouslyPreparedParameters() async throws {
+        let enabledManager = buildManager()
+        let disabledManager = buildManager(transportCapabilities: .chatOnly)
+        let otherAci = Aci.constantForTesting("00000000-0000-4000-8000-0000000000a1")
+        let otherIdentityKey = IdentityKeyPair.generate()
+        db.write { tx in
+            let recipient = try! SignalRecipient.insertRecord(
+                aci: otherAci,
+                phoneNumber: E164("+16505550101")!,
+                tx: tx,
+            )
+            identityManager.recipientIdentities[recipient.uniqueId] = OWSRecipientIdentity(
+                uniqueId: recipient.uniqueId,
+                identityKey: otherIdentityKey.identityKey.publicKey.keyBytes,
+                isFirstKnownKey: true,
+                createdAt: now,
+                verificationState: .default,
+            )
+        }
+        let params = try #require(db.read {
+            enabledManager.prepareCheck(aci: otherAci, localIdentifiers: localIdentifiers, tx: $0)
+        })
+        #expect(db.read {
+            disabledManager.prepareCheck(aci: otherAci, localIdentifiers: localIdentifiers, tx: $0)
+        } == nil)
+
+        await #expect(throws: BConnectedTransportError.unavailable(.keyTransparency)) {
+            try await disabledManager.performCheck(params: params)
+        }
+
+        #expect(storageServiceManager.waitCount == 0)
+        #expect(storageServiceManager.restoreCount == 0)
+        #expect(selfCheckState == nil)
+    }
 
     @Test
     func testSelfCheckChecksLocalAciAsSelf() async throws {
@@ -383,15 +484,18 @@ private struct MockMessageProcessor: KeyTransparencyManager.Shims.MessageProcess
 // MARK: -
 
 private class MockStorageServiceManager: StorageServiceManager {
+    var restoreCount = 0
+    var waitCount = 0
     func recordPendingLocalAccountUpdates() {}
     func restoreOrCreateManifestIfNecessary(
         authedAccount: AuthedAccount,
         masterKeySource: StorageService.MasterKeySource,
     ) -> Promise<Void> {
+        restoreCount += 1
         return .value(())
     }
 
-    func waitForPendingRestores() async throws {}
+    func waitForPendingRestores() async throws { waitCount += 1 }
 
     func setLocalIdentifiers(_ localIdentifiers: LocalIdentifiers) { owsFail("Not implemented!") }
     func registerForCron(_ cron: Cron) { owsFail("Not implemented!") }

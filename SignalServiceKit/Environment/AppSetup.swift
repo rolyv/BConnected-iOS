@@ -351,6 +351,7 @@ extension AppSetup.GlobalsContinuation {
         let signalServiceAddressCache = SignalServiceAddressCache()
         let storageServiceManager = testDependencies.storageServiceManager ?? StorageServiceManagerImpl(
             appReadiness: appReadiness,
+            transportCapabilities: libsignalNet.capabilities,
         )
         let syncManager = testDependencies.syncManager ?? OWSSyncManager(appReadiness: appReadiness)
         let udManager = OWSUDManagerImpl(
@@ -1377,6 +1378,7 @@ extension AppSetup.GlobalsContinuation {
             storageServiceManager: storageServiceManager,
             tsAccountManager: tsAccountManager,
             udManager: udManager,
+            transportCapabilities: libsignalNet.capabilities,
         )
 
         let incomingPniChangeNumberProcessor = IncomingPniChangeNumberProcessorImpl(

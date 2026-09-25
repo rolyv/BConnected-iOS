@@ -88,6 +88,7 @@ class ChatListFYISheetCoordinator {
     private let safetyTipsManager: SafetyTipsManager
     private let localFileBackupManager: LocalFileBackupManager
     private let localFileBackupStore: LocalFileBackupStore
+    private let transportCapabilities: BConnectedTransportCapabilities
 
     init(
         backupArchiveErrorStore: BackupArchiveErrorStore,
@@ -105,6 +106,7 @@ class ChatListFYISheetCoordinator {
         profileManager: ProfileManager,
         localFileBackupManager: LocalFileBackupManager,
         localFileBackupStore: LocalFileBackupStore,
+        transportCapabilities: BConnectedTransportCapabilities,
     ) {
         self.backupArchiveErrorStore = backupArchiveErrorStore
         self.backupAttachmentDownloadStore = backupAttachmentDownloadStore
@@ -121,6 +123,7 @@ class ChatListFYISheetCoordinator {
         self.safetyTipsManager = SafetyTipsManager()
         self.localFileBackupManager = localFileBackupManager
         self.localFileBackupStore = localFileBackupStore
+        self.transportCapabilities = transportCapabilities
     }
 
     func presentIfNecessary(
@@ -179,7 +182,7 @@ class ChatListFYISheetCoordinator {
             return .backupSubscriptionExpired(FYISheet.BackupSubscriptionExpired(subscriptionType: .testFlight))
         } else if backupSubscriptionIssueStore.shouldWarnIAPSubscriptionFailedToRenew(tx: tx) {
             return .backupSubscriptionFailedToRenew(FYISheet.BackupSubscriptionFailedToRenew())
-        } else if keyTransparencyStore.shouldWarnSelfCheckFailed(tx: tx) {
+        } else if transportCapabilities.allows(.keyTransparency), keyTransparencyStore.shouldWarnSelfCheckFailed(tx: tx) {
             return .keyTransparencySelfCheckFailed(FYISheet.KeyTransparencySelfCheckFailed())
         } else if backupArchiveErrorStore.hasError(tx: tx) {
             return .backupArchiveError(FYISheet.BackupArchiveError())
