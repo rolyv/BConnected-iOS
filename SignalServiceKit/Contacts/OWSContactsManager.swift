@@ -1245,6 +1245,18 @@ extension OWSContactsManager: ContactManager {
             return SSKEnvironment.shared.profileManagerRef.fetchUserProfiles(for: Array(addresses), tx: transaction)
                 .map { $0?.nameComponents.map { .profileName($0) } }
         }.refine { addresses -> [DisplayName?] in
+            guard BConnectedDMAlphaConfiguration.isForegroundTextAlphaScope,
+                  let account = BConnectedDirectoryAccount.current(tx: tx) else { return addresses.map { _ in nil } }
+            let store = BConnectedDirectoryNameStore()
+            return addresses.map { address in
+                guard let aci = address.serviceId as? Aci, aci.serviceIdString != account.aci else { return nil }
+                let value = store.member(aci: aci.serviceIdString, ownerACI: account.aci, tx: tx)
+                if store.needsRefresh(aci: aci.serviceIdString, ownerACI: account.aci, tx: tx) {
+                    BConnectedDirectoryNameResolver.enqueue(aci: aci.serviceIdString)
+                }
+                return value.map { .directoryName($0.fullName) }
+            }
+        }.refine { addresses -> [DisplayName?] in
             return addresses.map { $0.e164.map { .phoneNumber($0) } }
         }.refine { addresses -> [DisplayName?] in
             return usernameLookupManager.fetchUsernames(

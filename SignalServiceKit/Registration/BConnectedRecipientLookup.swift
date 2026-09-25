@@ -26,6 +26,12 @@ public struct BConnectedPrimaryRecipientCredentials: Sendable, CustomStringConve
     public var description: String { "BConnectedPrimaryRecipientCredentials(redacted)" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:]) }
+
+    func authenticate(_ request: inout URLRequest) {
+        request.setValue("Basic " + Data((aci + ":" + password).utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(signalAgent, forHTTPHeaderField: "X-Signal-Agent")
+    }
 }
 
 public struct BConnectedRecipient: Equatable, Sendable {

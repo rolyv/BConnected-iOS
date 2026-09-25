@@ -32,6 +32,7 @@ class ExperienceUpgradeManager {
     private let subscriptionConfigManager: SubscriptionConfigManager
     private let tsAccountManager: TSAccountManager
     private let usernameEducationManager: UsernameEducationManager
+    private let transportCapabilities: BConnectedTransportCapabilities
 
     private var lastPresentedMegaphone: Megaphone?
     private var lastPresentedMegaphoneView: MegaphoneView?
@@ -55,6 +56,7 @@ class ExperienceUpgradeManager {
         subscriptionConfigManager: SubscriptionConfigManager,
         tsAccountManager: TSAccountManager,
         usernameEducationManager: UsernameEducationManager,
+        transportCapabilities: BConnectedTransportCapabilities = .legacy,
     ) {
         self.attachmentStore = attachmentStore
         self.backupSettingsStore = backupSettingsStore
@@ -75,6 +77,7 @@ class ExperienceUpgradeManager {
         self.subscriptionConfigManager = subscriptionConfigManager
         self.tsAccountManager = tsAccountManager
         self.usernameEducationManager = usernameEducationManager
+        self.transportCapabilities = transportCapabilities
     }
 
     // MARK: -
@@ -105,7 +108,11 @@ class ExperienceUpgradeManager {
             ) ?? .distantPast
 
             var nextMegaphone: Megaphone?
-            for upgrade in allKnownExperienceUpgrades(tx: tx) {
+            for upgrade in Self.experienceUpgradeCandidates(
+                experienceUpgradeStore: experienceUpgradeStore,
+                transportCapabilities: transportCapabilities,
+                tx: tx,
+            ) {
                 if nextMegaphone != nil {
                     break
                 }
@@ -323,10 +330,11 @@ class ExperienceUpgradeManager {
         }
     }
 
-    /// Returns an array of all recognized ``ExperienceUpgrade``s. Contains the
-    /// persisted record if one exists and is applicable, and an in-memory
-    /// model otherwise.
-    private func allKnownExperienceUpgrades(
+    /// Returns recognized upgrades supported by the selected transport, using
+    /// persisted records when present without changing their completion or snooze state.
+    static func experienceUpgradeCandidates(
+        experienceUpgradeStore: ExperienceUpgradeStore,
+        transportCapabilities: BConnectedTransportCapabilities,
         tx: DBReadTransaction,
     ) -> [ExperienceUpgrade] {
         var experienceUpgrades = [ExperienceUpgrade]()
@@ -349,7 +357,18 @@ class ExperienceUpgradeManager {
             experienceUpgrades.append(ExperienceUpgrade.makeNew(withManifest: localManifest))
         }
 
-        return ExperienceUpgradeManifest.sortedByImportance(experienceUpgrades)
+        let supportedUpgrades = experienceUpgrades.filter { upgrade in
+            switch upgrade.manifest {
+            case .introducingPins, .pinReminder:
+                // Filter both new and previously saved prompts before their preconditions
+                // or UI run. An unsupported service must not change PIN preferences or
+                // permanently complete a reminder that may apply to a legacy transport.
+                return transportCapabilities.allows(.secureValueRecovery)
+            default:
+                return true
+            }
+        }
+        return ExperienceUpgradeManifest.sortedByImportance(supportedUpgrades)
     }
 
     /// - Returns

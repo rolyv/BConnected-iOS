@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BC1F00000000000000000001 /* BConnectedPinMegaphoneTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1F00000000000000000002 /* BConnectedPinMegaphoneTest.swift */; };
 		BC0F01000000000000000001 /* AppVersionTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0F01000000000000000002 /* AppVersionTest.swift */; };
 		BC0A03000000000000000001 /* bconnected-account-acceptance-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */; };
 		BC0E04000000000000000005 /* BConnectedCommunityEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */; };
@@ -19,8 +20,11 @@
 		BC0E02000000000000000005 /* mobile-enrollment-v1-invalid.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */; };
 		BC0E02000000000000000003 /* mobile-enrollment-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000004 /* mobile-enrollment-v1.json */; };
 		BC0E02000000000000000001 /* BConnectedEnrollmentTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */; };
+		BC2000000000000000000005 /* BConnectedDirectoryTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2000000000000000000006 /* BConnectedDirectoryTest.swift */; };
 		BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */; };
 		BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */; };
+		BC2000000000000000000001 /* BConnectedDirectoryClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2000000000000000000002 /* BConnectedDirectoryClient.swift */; };
+		BC2000000000000000000003 /* BConnectedDirectoryNameStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2000000000000000000004 /* BConnectedDirectoryNameStore.swift */; };
 		BC0E09000000000000000001 /* BConnectedRecipientLookup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E09000000000000000002 /* BConnectedRecipientLookup.swift */; };
 		BC0E05000000000000000001 /* BConnectedNativeAccountInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */; };
 		BC0E06000000000000000001 /* BConnectedLocalAccountSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */; };
@@ -4301,6 +4305,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BC1F00000000000000000002 /* BConnectedPinMegaphoneTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedPinMegaphoneTest.swift; sourceTree = "<group>"; };
 		BC0F01000000000000000002 /* AppVersionTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVersionTest.swift; sourceTree = "<group>"; };
 		BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/bconnected-account-acceptance-v1.json"; sourceTree = "<group>"; };
 		BC0E04000000000000000006 /* BConnectedCommunityEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollmentStore.swift; sourceTree = "<group>"; };
@@ -4313,8 +4318,11 @@
 		BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1-invalid.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000004 /* mobile-enrollment-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BConnectedEnrollmentTest.swift"; sourceTree = "<group>"; };
+		BC2000000000000000000006 /* BConnectedDirectoryTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedDirectoryTest.swift; sourceTree = "<group>"; };
 		BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecipientLookupTest.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentStore.swift; sourceTree = "<group>"; };
+		BC2000000000000000000002 /* BConnectedDirectoryClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedDirectoryClient.swift; sourceTree = "<group>"; };
+		BC2000000000000000000004 /* BConnectedDirectoryNameStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedDirectoryNameStore.swift; sourceTree = "<group>"; };
 		BC0E09000000000000000002 /* BConnectedRecipientLookup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecipientLookup.swift; sourceTree = "<group>"; };
 		BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedNativeAccountInstaller.swift; sourceTree = "<group>"; };
 		BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedLocalAccountSetup.swift; sourceTree = "<group>"; };
@@ -8751,6 +8759,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BC1F00000000000000000003 /* Megaphones */ = {
+			isa = PBXGroup;
+			children = (
+				BC1F00000000000000000002 /* BConnectedPinMegaphoneTest.swift */,
+			);
+			path = Megaphones;
+			sourceTree = "<group>";
+		};
 		040507132F80639B0078B769 /* RemoteReleaseNotes */ = {
 			isa = PBXGroup;
 			children = (
@@ -10380,6 +10396,8 @@
 				BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */,
 				BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */,
 				BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */,
+				BC2000000000000000000002 /* BConnectedDirectoryClient.swift */,
+				BC2000000000000000000004 /* BConnectedDirectoryNameStore.swift */,
 				BC0E09000000000000000002 /* BConnectedRecipientLookup.swift */,
 				BC0E05000000000000000002 /* BConnectedNativeAccountInstaller.swift */,
 				BC0E06000000000000000002 /* BConnectedLocalAccountSetup.swift */,
@@ -10398,6 +10416,7 @@
 			children = (
 				6600F366298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift */,
 				BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */,
+				BC2000000000000000000006 /* BConnectedDirectoryTest.swift */,
 				BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */,
 				BC0E02000000000000000004 /* mobile-enrollment-v1.json */,
 				BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */,
@@ -12018,6 +12037,7 @@
 				50791B1B2D037A7800D747F8 /* RecipientPickers */,
 				661278052996BA6700A1D5A1 /* Registration */,
 				040507132F80639B0078B769 /* RemoteReleaseNotes */,
+				BC1F00000000000000000003 /* Megaphones */,
 				4C3EF8002109184A0007EBF7 /* SSKTests */,
 				D97046082E81D5B60034C05D /* Storage */,
 				E75DD3DC2810CD3500E32C36 /* subscriptions */,
@@ -19456,6 +19476,7 @@
 				040507182F8064190078B769 /* RemoteReleaseNotesFetcher.swift in Sources */,
 				040507162F8063CE0078B769 /* RemoteReleaseNotesFetchingManager.swift in Sources */,
 				040507152F8063AB0078B769 /* RemoteReleaseNotesFetchingManagerTests.swift in Sources */,
+				BC1F00000000000000000001 /* BConnectedPinMegaphoneTest.swift in Sources */,
 				F5C80FA22BE3F29F0028F76D /* RTCIceServerFetcherTest.swift in Sources */,
 				F963164B291AE06C00218FB7 /* ScrubbingLogFormatterTest.swift in Sources */,
 				505C2ED92997422D00C23FB2 /* SelfSignedIdentityTest.swift in Sources */,
@@ -20388,6 +20409,8 @@
 				BC0E01000000000000000003 /* BConnectedEnrollmentState.swift in Sources */,
 				BC0E01000000000000000005 /* BConnectedEnrollmentClient.swift in Sources */,
 				BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */,
+				BC2000000000000000000001 /* BConnectedDirectoryClient.swift in Sources */,
+				BC2000000000000000000003 /* BConnectedDirectoryNameStore.swift in Sources */,
 				BC0E09000000000000000001 /* BConnectedRecipientLookup.swift in Sources */,
 				BC0E05000000000000000001 /* BConnectedNativeAccountInstaller.swift in Sources */,
 				BC0E06000000000000000001 /* BConnectedLocalAccountSetup.swift in Sources */,
@@ -20925,7 +20948,8 @@
 				6600F351298C8BC900B1EDB7 /* RegistrationRequestFactoryTest.swift in Sources */,
 				6600F367298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift in Sources */,
 				BC0E02000000000000000001 /* BConnectedEnrollmentTest.swift in Sources */,
-		BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */,
+		BC2000000000000000000005 /* BConnectedDirectoryTest.swift in Sources */,
+				BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */,
 				BC0C01000000000000000003 /* BConnectedRegistrationKeyCommitmentTest.swift in Sources */,
 				F9426259289B1B5500460798 /* RemoteConfigManagerTests.swift in Sources */,
 				F945FE4D298481EA00C835C7 /* RingrtcFieldTrialsTest.swift in Sources */,

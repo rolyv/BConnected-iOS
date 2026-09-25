@@ -162,6 +162,7 @@ public class AppEnvironment: NSObject {
             subscriptionConfigManager: DependenciesBridge.shared.subscriptionConfigManager,
             tsAccountManager: DependenciesBridge.shared.tsAccountManager,
             usernameEducationManager: DependenciesBridge.shared.usernameEducationManager,
+            transportCapabilities: DependenciesBridge.shared.libsignalNet.capabilities,
         )
 
         self.groupSendEndorsementExpirationJob = GroupSendEndorsementExpirationJob(

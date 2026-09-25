@@ -11,24 +11,34 @@ import LibSignalClient
 class ComposeViewController: RecipientPickerContainerViewController {
     private var isBConnectedDMAlpha = false
     private var bConnectedPublication: BConnectedPublicationConfiguration?
-    private var ownAlumniCode: String?
-    private var alumniCodeField: UITextField?
-    private var alumniStatusLabel: UILabel?
-    private var lookupButton: UIButton?
-    private var lookupInProgress = false
+    private let directoryClient = BConnectedDirectoryClient()
+    private var directoryMembers: [BConnectedDirectoryMember] = []
+    private var directoryAccount: BConnectedDirectoryAccount?
+    private var directoryQuery = ""
+    private var nextOffset: Int?
+    private var retryOffset = 0
+    private var hasLoadedDirectory = false
+    private var directoryLoading = false
     private var lookupTask: Task<Void, Never>?
+    private var lookupGeneration = UUID()
+    private let directoryTable = UITableView(frame: .zero, style: .plain)
+    private let directorySearchBar = UISearchBar()
+    private let directoryStatus = UILabel()
+    private let directorySpinner = UIActivityIndicatorView(style: .medium)
+    private let directoryRetryButton = UIButton(type: .system)
+    private let directoryMoreButton = UIButton(type: .system)
 
     override func viewDidLoad() {
         super.viewDidLoad()
-
         title = OWSLocalizedString("MESSAGE_COMPOSEVIEW_TITLE", comment: "Title for the compose view.")
-
         view.backgroundColor = Theme.backgroundColor
         navigationItem.rightBarButtonItem = .cancelButton(dismissingFrom: self)
 
         if BConnectedDMAlphaConfiguration.isForegroundTextAlphaScope {
             isBConnectedDMAlpha = true
-            configureBConnectedDMAlphaComposer()
+            configureBConnectedDirectory()
+            NotificationCenter.default.addObserver(self, selector: #selector(directoryWillResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(directoryDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
             return
         }
 
@@ -37,273 +47,258 @@ class ComposeViewController: RecipientPickerContainerViewController {
         recipientPicker.groupsToShow = .groupsThatUserIsMemberOfWhenSearching
         recipientPicker.shouldHideLocalRecipient = false
         recipientPicker.delegate = self
-
         addRecipientPicker()
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        guard isBConnectedDMAlpha else { return }
-        refreshBConnectedAccountState()
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        refreshDirectoryIfNeeded()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         if isMovingFromParent || isBeingDismissed || navigationController?.isBeingDismissed == true {
-            lookupTask?.cancel()
+            cancelDirectoryRequest()
         }
     }
 
-    private func configureBConnectedDMAlphaComposer() {
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Keep the explanation inside the scrolling list at accessibility text sizes.
+        guard isBConnectedDMAlpha, let header = directoryTable.tableHeaderView as? UILabel,
+              directoryTable.bounds.width > 0 else { return }
+        let width = directoryTable.bounds.width
+        let height = header.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height + 16
+        if header.frame.width != width || header.frame.height != height {
+            header.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            directoryTable.tableHeaderView = header
+        }
+    }
+
+    deinit {
+        lookupTask?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    private func configureBConnectedDirectory() {
         let info = Bundle.main.infoDictionary ?? [:]
         do {
-            // This validates the complete DM-alpha scope and all explicit endpoint/trust inputs.
-            _ = try BConnectedDMAlphaConfiguration(
-                info: info,
-                userAgent: OWSURLSession.userAgentHeaderValueSignalIos,
-            )
+            _ = try BConnectedDMAlphaConfiguration(info: info, userAgent: OWSURLSession.userAgentHeaderValueSignalIos)
             bConnectedPublication = try BConnectedPublicationConfiguration(info: info)
-        } catch {
-            bConnectedPublication = nil
-        }
+        } catch { bConnectedPublication = nil }
 
-        let titleLabel = UILabel()
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
-        titleLabel.text = "Send a direct message"
+        let explanation = UILabel()
+        explanation.font = .preferredFont(forTextStyle: .subheadline)
+        explanation.adjustsFontForContentSizeCategory = true
+        explanation.textColor = .secondaryLabel
+        explanation.numberOfLines = 0
+        explanation.text = "Find alumni by name or class year. Only approved members can see this directory. Phone numbers stay private."
 
-        let explanationLabel = UILabel()
-        explanationLabel.font = .preferredFont(forTextStyle: .subheadline)
-        explanationLabel.textColor = .secondaryLabel
-        explanationLabel.numberOfLines = 0
-        explanationLabel.text = "Ask the other alumnus to share their alumni code. You can compare safety numbers in the conversation to confirm each other’s identity."
+        directorySearchBar.placeholder = "Name or class year"
+        directorySearchBar.searchTextField.accessibilityLabel = "Search alumni by name or class year"
+        directorySearchBar.autocorrectionType = .no
+        directorySearchBar.autocapitalizationType = .none
+        directorySearchBar.searchBarStyle = .minimal
+        directorySearchBar.delegate = self
 
-        let ownCodeLabel = UILabel()
-        ownCodeLabel.font = .preferredFont(forTextStyle: .body)
-        ownCodeLabel.numberOfLines = 0
-        ownCodeLabel.text = "Your alumni code is available after the primary account is ready."
+        directoryStatus.font = .preferredFont(forTextStyle: .subheadline)
+        directoryStatus.adjustsFontForContentSizeCategory = true
+        directoryStatus.textColor = .secondaryLabel
+        directoryStatus.numberOfLines = 0
+        directoryStatus.accessibilityTraits = .staticText
+        directoryRetryButton.setTitle("Try again", for: .normal)
+        directoryRetryButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
+        directoryRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        directoryRetryButton.addTarget(self, action: #selector(retryDirectorySearch), for: .touchUpInside)
+        directoryMoreButton.setTitle("Load more alumni", for: .normal)
+        directoryMoreButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
+        directoryMoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        directoryMoreButton.addTarget(self, action: #selector(loadMoreDirectoryMembers), for: .touchUpInside)
+        directoryRetryButton.isHidden = true
+        directoryMoreButton.isHidden = true
+        directorySpinner.hidesWhenStopped = true
 
-        let copyButton = UIButton(type: .system)
-        copyButton.setTitle("Copy my alumni code", for: .normal)
-        copyButton.contentHorizontalAlignment = .leading
-        copyButton.addTarget(self, action: #selector(copyOwnAlumniCode), for: .touchUpInside)
+        directoryTable.backgroundColor = Theme.backgroundColor
+        directoryTable.dataSource = self
+        directoryTable.delegate = self
+        directoryTable.rowHeight = UITableView.automaticDimension
+        directoryTable.estimatedRowHeight = 76
+        directoryTable.keyboardDismissMode = .onDrag
+        directoryTable.tableFooterView = UIView()
+        directoryTable.tableHeaderView = explanation
+        directoryTable.register(UITableViewCell.self, forCellReuseIdentifier: "BConnectedDirectoryMember")
 
-        let shareButton = UIButton(type: .system)
-        shareButton.setTitle("Share my alumni code", for: .normal)
-        shareButton.contentHorizontalAlignment = .leading
-        shareButton.addTarget(self, action: #selector(shareOwnAlumniCode(_:)), for: .touchUpInside)
-
-        let codeLabel = UILabel()
-        codeLabel.font = .preferredFont(forTextStyle: .headline)
-        codeLabel.text = "Alumni code"
-
-        let codeField = UITextField()
-        codeField.borderStyle = .roundedRect
-        codeField.autocapitalizationType = .none
-        codeField.autocorrectionType = .no
-        codeField.spellCheckingType = .no
-        codeField.keyboardType = .asciiCapable
-        codeField.textContentType = nil
-        codeField.placeholder = "Paste alumni code"
-        codeField.accessibilityLabel = "Alumni code"
-        codeField.clearButtonMode = .whileEditing
-        codeField.returnKeyType = .go
-        codeField.addTarget(self, action: #selector(startBConnectedLookup), for: .editingDidEndOnExit)
-        alumniCodeField = codeField
-
-        let statusLabel = UILabel()
-        statusLabel.font = .preferredFont(forTextStyle: .footnote)
-        statusLabel.textColor = .secondaryLabel
-        statusLabel.numberOfLines = 0
-        alumniStatusLabel = statusLabel
-
-        let startButton = UIButton(type: .system)
-        startButton.setTitle("Start conversation", for: .normal)
-        startButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
-        startButton.tintColor = .Signal.accent
-        startButton.addTarget(self, action: #selector(startBConnectedLookup), for: .touchUpInside)
-        lookupButton = startButton
-
-        let stack = UIStackView(arrangedSubviews: [
-            titleLabel, explanationLabel, ownCodeLabel, copyButton, shareButton,
-            codeLabel, codeField, statusLabel, startButton,
-        ])
+        let stack = UIStackView(arrangedSubviews: [directorySearchBar, directoryStatus, directorySpinner,
+                                                 directoryRetryButton, directoryTable, directoryMoreButton])
         stack.axis = .vertical
-        stack.alignment = .fill
-        stack.spacing = 12
-        stack.setCustomSpacing(24, after: explanationLabel)
-        stack.setCustomSpacing(24, after: shareButton)
+        stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
-        let scrollView = UIScrollView()
-        scrollView.keyboardDismissMode = .interactive
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scrollView)
-        scrollView.addSubview(stack)
-
+        view.addSubview(stack)
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -20),
-            stack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 24),
-            stack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
-            stack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40),
+            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            stack.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8),
+            directoryRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            directoryMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
-
-        alphaOwnCodeLabel = ownCodeLabel
-        copyOwnCodeButton = copyButton
-        shareOwnCodeButton = shareButton
-        refreshBConnectedAccountState()
     }
 
-    private var alphaOwnCodeLabel: UILabel?
-    private var copyOwnCodeButton: UIButton?
-    private var shareOwnCodeButton: UIButton?
+    private func currentDirectoryAccount() -> BConnectedDirectoryAccount? {
+        SSKEnvironment.shared.databaseStorageRef.read { BConnectedDirectoryAccount.current(tx: $0) }
+    }
 
-    private func refreshBConnectedAccountState() {
+    private func refreshDirectoryIfNeeded() {
+        guard isBConnectedDMAlpha, viewIfLoaded?.window != nil else { return }
+        if !hasLoadedDirectory || currentDirectoryAccount() != directoryAccount {
+            searchDirectory(offset: 0)
+        }
+    }
+
+    @objc private func directoryWillResignActive() {
         guard isBConnectedDMAlpha else { return }
-        let account = currentBConnectedPrimaryAccount()
-        ownAlumniCode = account?.aci
-        alphaOwnCodeLabel?.text = account.map { "Your alumni code: \($0.aci)" }
-            ?? "Your alumni code is available after the primary account is ready."
-        copyOwnCodeButton?.isEnabled = account != nil
-        shareOwnCodeButton?.isEnabled = account != nil
-
-        if bConnectedPublication == nil {
-            alumniStatusLabel?.text = "Messaging is unavailable because the DM-alpha endpoint or trust configuration is incomplete."
-        } else if account == nil {
-            alumniStatusLabel?.text = "Messaging is available only after a registered primary account is ready."
-        } else {
-            alumniStatusLabel?.text = nil
-        }
-        updateLookupButtonState()
-    }
-
-    private func updateLookupButtonState() {
-        lookupButton?.isEnabled = !lookupInProgress && bConnectedPublication != nil && currentBConnectedPrimaryAccount() != nil
-    }
-
-    private func currentBConnectedPrimaryAccount() -> BConnectedPrimaryAccount? {
-        return SSKEnvironment.shared.databaseStorageRef.read { transaction in
-            Self.bConnectedPrimaryAccount(transaction: transaction)
+        if directoryLoading {
+            cancelDirectoryRequest()
+            directoryStatus.text = "Search paused. Try again when you're ready."
+            directoryRetryButton.isHidden = false
         }
     }
 
-    private static func bConnectedPrimaryAccount(transaction: DBReadTransaction) -> BConnectedPrimaryAccount? {
-        let accountManager = DependenciesBridge.shared.tsAccountManager
-        guard (try? accountManager.registeredState(tx: transaction)) != nil,
-              let identifiers = accountManager.localIdentifiers(tx: transaction),
-              accountManager.storedDeviceId(tx: transaction).ifValid == .primary,
-              let password = accountManager.storedServerAuthToken(tx: transaction),
-              let credentials = try? BConnectedPrimaryRecipientCredentials(
-                aci: identifiers.aci.serviceIdString.lowercased(),
-                password: password,
-                deviceId: 1,
-                userAgent: OWSURLSession.userAgentHeaderValueSignalIos,
-                signalAgent: "OWI",
-              ) else {
-            return nil
+    @objc private func directoryDidBecomeActive() { refreshDirectoryIfNeeded() }
+
+    private func cancelDirectoryRequest() {
+        lookupGeneration = UUID()
+        lookupTask?.cancel()
+        lookupTask = nil
+        setDirectoryLoading(false)
+    }
+
+    private func setDirectoryLoading(_ loading: Bool) {
+        directoryLoading = loading
+        directoryTable.allowsSelection = !loading
+        directoryMoreButton.isEnabled = !loading
+        if loading { directorySpinner.startAnimating() } else { directorySpinner.stopAnimating() }
+    }
+
+    @objc private func retryDirectorySearch() { searchDirectory(offset: retryOffset) }
+    @objc private func loadMoreDirectoryMembers() {
+        guard let nextOffset, !directoryLoading else { return }
+        searchDirectory(offset: nextOffset)
+    }
+
+    private func searchDirectory(offset: Int, debounce: Bool = false) {
+        cancelDirectoryRequest()
+        let query = directorySearchBar.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        directoryQuery = query
+        retryOffset = offset
+        directoryRetryButton.isHidden = true
+        directoryMoreButton.isHidden = true
+        if offset == 0 {
+            directoryMembers = []
+            directoryAccount = nil
+            nextOffset = nil
+            hasLoadedDirectory = false
+            directoryTable.reloadData()
         }
-        return BConnectedPrimaryAccount(aci: identifiers.aci.serviceIdString.lowercased(), password: password, credentials: credentials)
-    }
-
-    @objc private func copyOwnAlumniCode() {
-        guard let ownAlumniCode else { return }
-        UIPasteboard.general.string = ownAlumniCode
-        alumniStatusLabel?.text = "Your alumni code was copied."
-    }
-
-    @objc private func shareOwnAlumniCode(_ sender: UIButton) {
-        guard let ownAlumniCode else { return }
-        let activity = UIActivityViewController(activityItems: [ownAlumniCode], applicationActivities: nil)
-        if let popover = activity.popoverPresentationController {
-            popover.sourceView = sender
-            popover.sourceRect = sender.bounds
+        guard let configuration = bConnectedPublication, let account = currentDirectoryAccount() else {
+            directoryStatus.text = "The alumni directory is available after your account is ready."
+            return
         }
-        present(activity, animated: true)
-    }
-
-    @objc private func startBConnectedLookup() {
-        guard isBConnectedDMAlpha, !lookupInProgress else { return }
-        view.endEditing(true)
+        guard query.unicodeScalars.count <= 100 else {
+            directoryStatus.text = "Use a shorter name or class year."
+            return
+        }
+        let generation = lookupGeneration
+        setDirectoryLoading(true)
+        directoryStatus.text = "Finding alumni…"
         lookupTask = Task { [weak self] in
             guard let self else { return }
-            await self.lookupAndPresentBConnectedConversation()
+            do {
+                if debounce { try await Task.sleep(nanoseconds: 300_000_000) }
+                let page = try await directoryClient.search(query: query, offset: offset,
+                    credentials: account.credentials, configuration: configuration)
+                guard isCurrentDirectoryRequest(generation, account: account) else { return }
+                SSKEnvironment.shared.databaseStorageRef.write { tx in
+                    guard BConnectedDirectoryAccount.current(tx: tx) == account else { return }
+                    let store = BConnectedDirectoryNameStore()
+                    for member in page.members { try? store.save(member, ownerACI: account.aci, tx: tx) }
+                }
+                guard isCurrentDirectoryRequest(generation, account: account) else { return }
+                let incoming = page.members.filter { $0.aci != account.aci }
+                let incomingIDs = Set(incoming.map(\.aci))
+                directoryMembers.removeAll { incomingIDs.contains($0.aci) }
+                directoryMembers.append(contentsOf: incoming)
+                directoryAccount = account
+                nextOffset = page.nextOffset
+                hasLoadedDirectory = true
+                setDirectoryLoading(false)
+                directoryStatus.text = directoryMembers.isEmpty
+                    ? (query.isEmpty ? "No other alumni are available yet." : "No alumni found. Try another name or class year.")
+                    : nil
+                directoryMoreButton.isHidden = nextOffset == nil
+                directoryTable.reloadData()
+            } catch {
+                guard generation == lookupGeneration, !Task.isCancelled, viewIfLoaded?.window != nil else { return }
+                setDirectoryLoading(false)
+                directoryStatus.text = "We couldn’t load the alumni directory. Try again."
+                directoryRetryButton.isHidden = false
+            }
         }
     }
 
-    private func lookupAndPresentBConnectedConversation() async {
-        guard let configuration = bConnectedPublication else {
-            alumniStatusLabel?.text = "Messaging is unavailable because the DM-alpha endpoint or trust configuration is incomplete."
-            return
+    private func isCurrentDirectoryRequest(_ generation: UUID, account: BConnectedDirectoryAccount) -> Bool {
+        guard generation == lookupGeneration, !Task.isCancelled, viewIfLoaded?.window != nil,
+              UIApplication.shared.applicationState == .active else { return false }
+        guard currentDirectoryAccount() == account else {
+            directoryMembers = []
+            directoryAccount = nil
+            hasLoadedDirectory = false
+            directoryTable.reloadData()
+            setDirectoryLoading(false)
+            directoryStatus.text = "Your account changed. Search again to continue."
+            directoryRetryButton.isHidden = false
+            retryOffset = 0
+            return false
         }
-        let targetACI = alumniCodeField?.text ?? ""
-        guard Self.isCanonicalBConnectedAlumniCode(targetACI) else {
-            alumniStatusLabel?.text = "Enter the complete alumni code exactly as it was shared."
-            return
-        }
-        guard let account = currentBConnectedPrimaryAccount() else {
-            refreshBConnectedAccountState()
-            return
-        }
-        guard targetACI != account.aci else {
-            alumniStatusLabel?.text = "Enter another member’s Alumni code, not your own."
-            return
-        }
-
-        lookupInProgress = true
-        lookupButton?.isEnabled = false
-        alumniStatusLabel?.text = "Checking alumni code…"
-        defer {
-            lookupInProgress = false
-            updateLookupButtonState()
-        }
-
-        do {
-            let result = try await BConnectedRecipientLookupClient().lookup(
-                recipientACI: targetACI,
-                credentials: account.credentials,
-                configuration: configuration,
-            )
-            guard !Task.isCancelled, viewIfLoaded?.window != nil else { return }
-            guard result.aci == targetACI, result.deviceId == 1,
-                  currentBConnectedPrimaryAccount() == account,
-                  let recipientACI = Aci.parseFrom(aciString: result.aci),
-                  let localACI = Aci.parseFrom(aciString: account.aci), recipientACI != localACI else {
-                alumniStatusLabel?.text = "Your primary account changed while the code was checked. Try again."
-                return
-            }
-
-            let thread = SSKEnvironment.shared.databaseStorageRef.write { transaction -> TSThread? in
-                guard Self.bConnectedPrimaryAccount(transaction: transaction) == account else { return nil }
-                var recipient = DependenciesBridge.shared.recipientFetcher.fetchOrCreate(serviceId: recipientACI, tx: transaction)
-                DependenciesBridge.shared.recipientManager.markAsRegisteredAndSave(
-                    &recipient,
-                    deviceId: .primary,
-                    shouldUpdateStorageService: false,
-                    tx: transaction,
-                )
-                return TSContactThread.getOrCreateThread(
-                    withContactAddress: SignalServiceAddress(recipientACI),
-                    transaction: transaction,
-                )
-            }
-            guard !Task.isCancelled, viewIfLoaded?.window != nil else { return }
-            guard let thread else {
-                alumniStatusLabel?.text = "Your primary account changed while the conversation was being prepared. Try again."
-                return
-            }
-            newConversation(thread: thread)
-        } catch {
-            guard !Task.isCancelled, viewIfLoaded?.window != nil else { return }
-            alumniStatusLabel?.text = "That Alumni code could not be verified. Check the code and try again."
-        }
+        return true
     }
 
-    private static func isCanonicalBConnectedAlumniCode(_ value: String) -> Bool {
-        guard let uuid = UUID(uuidString: value), uuid.uuidString.lowercased() == value else { return false }
-        return value != "00000000-0000-0000-0000-000000000000"
+    private func selectDirectoryMember(_ member: BConnectedDirectoryMember) {
+        guard !directoryLoading, let configuration = bConnectedPublication,
+              let account = currentDirectoryAccount(), account == directoryAccount, member.aci != account.aci else { return }
+        view.endEditing(true)
+        cancelDirectoryRequest()
+        let generation = lookupGeneration
+        setDirectoryLoading(true)
+        directoryRetryButton.isHidden = true
+        directoryStatus.text = "Opening conversation…"
+        lookupTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let resolved = try await directoryClient.resolve(aci: member.aci, credentials: account.credentials, configuration: configuration)
+                guard isCurrentDirectoryRequest(generation, account: account), resolved.aci == member.aci,
+                      let recipientACI = Aci.parseFrom(aciString: resolved.aci) else { return }
+                let thread = SSKEnvironment.shared.databaseStorageRef.write { tx -> TSThread? in
+                    guard BConnectedDirectoryAccount.current(tx: tx) == account else { return nil }
+                    do { try BConnectedDirectoryNameStore().save(resolved, ownerACI: account.aci, tx: tx) }
+                    catch { return nil }
+                    var recipient = DependenciesBridge.shared.recipientFetcher.fetchOrCreate(serviceId: recipientACI, tx: tx)
+                    DependenciesBridge.shared.recipientManager.markAsRegisteredAndSave(&recipient, deviceId: .primary,
+                        shouldUpdateStorageService: false, tx: tx)
+                    return TSContactThread.getOrCreateThread(withContactAddress: SignalServiceAddress(recipientACI), transaction: tx)
+                }
+                guard isCurrentDirectoryRequest(generation, account: account) else { return }
+                setDirectoryLoading(false)
+                guard let thread else { throw BConnectedEnrollmentError.persistenceUnavailable }
+                newConversation(thread: thread)
+            } catch {
+                guard generation == lookupGeneration, !Task.isCancelled, viewIfLoaded?.window != nil else { return }
+                setDirectoryLoading(false)
+                directoryStatus.text = "This alumnus isn’t available right now. Try searching again."
+                retryOffset = 0
+                directoryRetryButton.isHidden = false
+            }
+        }
     }
 
     /// Presents the conversation for the given address and dismisses this
@@ -353,18 +348,43 @@ class ComposeViewController: RecipientPickerContainerViewController {
     }
 }
 
-private struct BConnectedPrimaryAccount: Equatable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
-    let aci: String
-    let password: String
-    let credentials: BConnectedPrimaryRecipientCredentials
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.aci == rhs.aci && lhs.password == rhs.password
+extension ComposeViewController: UISearchBarDelegate, UITableViewDataSource, UITableViewDelegate {
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        guard searchBar.searchTextField.markedTextRange == nil else { return }
+        searchDirectory(offset: 0, debounce: true)
     }
 
-    var description: String { "BConnectedPrimaryAccount(redacted)" }
-    var debugDescription: String { description }
-    var customMirror: Mirror { Mirror(self, children: []) }
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        searchBar.resignFirstResponder()
+        searchDirectory(offset: 0)
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { directoryMembers.count }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BConnectedDirectoryMember", for: indexPath)
+        let member = directoryMembers[indexPath.row]
+        var content = cell.defaultContentConfiguration()
+        content.text = member.fullName
+        content.secondaryText = "Class of \(member.graduationYear)"
+        content.textProperties.font = .preferredFont(forTextStyle: .body)
+        content.textProperties.numberOfLines = 0
+        content.secondaryTextProperties.font = .preferredFont(forTextStyle: .subheadline)
+        content.secondaryTextProperties.color = .secondaryLabel
+        content.secondaryTextProperties.numberOfLines = 0
+        cell.contentConfiguration = content
+        cell.backgroundColor = Theme.backgroundColor
+        cell.accessoryType = .disclosureIndicator
+        cell.accessibilityLabel = "\(member.fullName), class of \(member.graduationYear)"
+        cell.accessibilityTraits = .button
+        return cell
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard directoryMembers.indices.contains(indexPath.row) else { return }
+        selectDirectoryMember(directoryMembers[indexPath.row])
+    }
 }
 
 extension ComposeViewController: RecipientPickerDelegate, UsernameLinkScanDelegate {
