@@ -1381,6 +1381,15 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
                 launchContext: launchContext,
                 loadingViewController: loadingViewController,
             )
+            // The scene may already be active: its original activation was
+            // ignored while preflight was blocking launch. Resume foreground
+            // work after setup so recovery also opens the chat connection.
+            if UIApplication.shared.applicationState == .active {
+                self.appReadiness.runNowOrWhenAppDidBecomeReadySync {
+                    guard UIApplication.shared.applicationState == .active else { return }
+                    self.handleActivation()
+                }
+            }
         }
 
         for action in actions {
