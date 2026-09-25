@@ -62,19 +62,6 @@ class ComposeViewController: RecipientPickerContainerViewController {
         }
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        // Keep the explanation inside the scrolling list at accessibility text sizes.
-        guard isBConnectedDMAlpha, let header = directoryTable.tableHeaderView as? UILabel,
-              directoryTable.bounds.width > 0 else { return }
-        let width = directoryTable.bounds.width
-        let height = header.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height + 16
-        if header.frame.width != width || header.frame.height != height {
-            header.frame = CGRect(x: 0, y: 0, width: width, height: height)
-            directoryTable.tableHeaderView = header
-        }
-    }
-
     deinit {
         lookupTask?.cancel()
         NotificationCenter.default.removeObserver(self)
@@ -86,13 +73,6 @@ class ComposeViewController: RecipientPickerContainerViewController {
             _ = try BConnectedDMAlphaConfiguration(info: info, userAgent: OWSURLSession.userAgentHeaderValueSignalIos)
             bConnectedPublication = try BConnectedPublicationConfiguration(info: info)
         } catch { bConnectedPublication = nil }
-
-        let explanation = UILabel()
-        explanation.font = .preferredFont(forTextStyle: .subheadline)
-        explanation.adjustsFontForContentSizeCategory = true
-        explanation.textColor = .secondaryLabel
-        explanation.numberOfLines = 0
-        explanation.text = "Find alumni by name or class year. Only approved members can see this directory. Phone numbers stay private."
 
         directorySearchBar.placeholder = "Name or class year"
         directorySearchBar.searchTextField.accessibilityLabel = "Search alumni by name or class year"
@@ -123,10 +103,12 @@ class ComposeViewController: RecipientPickerContainerViewController {
         directoryTable.delegate = self
         directoryTable.rowHeight = UITableView.automaticDimension
         directoryTable.estimatedRowHeight = 76
+        directoryTable.sectionHeaderHeight = UITableView.automaticDimension
+        directoryTable.estimatedSectionHeaderHeight = 88
         directoryTable.keyboardDismissMode = .onDrag
         directoryTable.tableFooterView = UIView()
-        directoryTable.tableHeaderView = explanation
         directoryTable.register(UITableViewCell.self, forCellReuseIdentifier: "BConnectedDirectoryMember")
+        directoryTable.register(UITableViewHeaderFooterView.self, forHeaderFooterViewReuseIdentifier: "BConnectedDirectoryExplanation")
 
         let stack = UIStackView(arrangedSubviews: [directorySearchBar, directoryStatus, directorySpinner,
                                                  directoryRetryButton, directoryTable, directoryMoreButton])
@@ -134,13 +116,18 @@ class ComposeViewController: RecipientPickerContainerViewController {
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
+        let retryMinimumHeight = directoryRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        let moreMinimumHeight = directoryMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        // UIStackView uses a required zero-height constraint for hidden arranged views.
+        retryMinimumHeight.priority = UILayoutPriority(999)
+        moreMinimumHeight.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8),
-            directoryRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            directoryMoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            retryMinimumHeight,
+            moreMinimumHeight,
         ])
     }
 
@@ -360,6 +347,20 @@ extension ComposeViewController: UISearchBarDelegate, UITableViewDataSource, UIT
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { directoryMembers.count }
+
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        guard let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: "BConnectedDirectoryExplanation") else { return nil }
+        var content = UIListContentConfiguration.groupedHeader()
+        content.text = "Find alumni by name or class year. Only approved members can see this directory. Phone numbers stay private."
+        content.textProperties.font = .preferredFont(forTextStyle: .subheadline)
+        content.textProperties.adjustsFontForContentSizeCategory = true
+        content.textProperties.color = .secondaryLabel
+        content.textProperties.numberOfLines = 0
+        content.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0)
+        header.contentConfiguration = content
+        header.backgroundConfiguration = .clear()
+        return header
+    }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "BConnectedDirectoryMember", for: indexPath)
