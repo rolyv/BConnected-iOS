@@ -275,6 +275,16 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         // files haven't been moved into place)
         let didDeviceTransferRestoreSucceed = deviceTransferRestore.launchCleanup()
 
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        // Inspect before opening SQLite, which may create a missing database.
+        // This report contains metadata only and never selects or repairs a store.
+        let databaseDiagnostics = BConnectedDatabaseDiagnostics.report(
+            baseDirectory: URL(fileURLWithPath: mainAppContext.appDatabaseBaseDirectoryPath(), isDirectory: true),
+            defaultsSelector: mainAppContext.appUserDefaults().string(forKey: "GRDBPrimaryDirectoryNameKey"),
+        )
+        Logger.info("BConnected database diagnostics: \(databaseDiagnostics.sanitizedDescription)")
+        #endif
+
         let databaseStorage: SDSDatabaseStorage
         do {
             databaseStorage = try SDSDatabaseStorage(

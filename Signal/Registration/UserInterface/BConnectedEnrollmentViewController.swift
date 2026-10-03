@@ -422,7 +422,15 @@ struct BConnectedEnrollmentView: View {
                     primary("Email the alumni team") { openURL(URL(string: "mailto:alumni@belenjesuit.org")!) }
                     Button(copiedHelp ? "Help summary copied" : "Copy help summary") {
                         // No number, name, OTP, raw IDs, credentials, keys, or transport errors.
-                        UIPasteboard.general.string = "BConnected Chat signup\nScreen: \(model.screen)\nSaved setup readable: \(!model.stateUnreadable)\nApp version: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")"
+                        let diagnostics = BConnectedDatabaseDiagnostics.report(
+                            baseDirectory: URL(fileURLWithPath: CurrentAppContext().appDatabaseBaseDirectoryPath(), isDirectory: true),
+                            defaultsSelector: CurrentAppContext().appUserDefaults().string(forKey: "GRDBPrimaryDirectoryNameKey"),
+                        )
+                        let accountState = DependenciesBridge.shared.db.read { tx in
+                            let account = DependenciesBridge.shared.tsAccountManager
+                            return "Registration: \(account.registrationState(tx: tx).logString)\nLocal credentials present: \(account.storedServerAuthToken(tx: tx) != nil)"
+                        }
+                        UIPasteboard.general.string = "BConnected Chat signup\nScreen: \(model.screen)\nSaved setup readable: \(!model.stateUnreadable)\nApp version: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"))\n\(accountState)\nStorage: \(diagnostics.sanitizedDescription)"
                         copiedHelp = true
                     }.frame(minHeight: 44)
                 }.padding(24)

@@ -4,8 +4,216 @@
 //
 
 import Foundation
+import Darwin
 public import GRDB
 import UIKit
+
+/// Metadata only. This never calls the normal directory resolver, which can repair the selector
+/// file, and never opens a database. Names and paths are used locally but cannot enter the report.
+public enum BConnectedDatabaseDiagnostics {
+    public enum State: String, Codable { case present, missing, unavailable, unsafe, notInspected }
+    public enum SelectorState: String, Codable { case valid, missing, invalid, unreadable, unsafe, notInspected }
+    public enum FolderCategory: String, Codable { case defaultFolder, customFolder, unsafe, unavailable }
+    public enum SelectorSource: String, Codable { case file, defaults, defaultFallback, unavailable }
+    public enum ScanState: String, Codable { case complete, incomplete, unavailable, notInspected }
+    public enum SizeCategory: String, Codable {
+        case empty, underOneMiB, oneToTenMiB, tenToHundredMiB, hundredMiBOrMore, unknown
+    }
+
+    public struct DatabaseFile: Codable, Equatable {
+        public let state: State
+        public let sizeCategory: SizeCategory
+        /// Only the selected database reports exact bytes; alternates report categories only.
+        public let sizeBytes: UInt64?
+    }
+
+    public struct Report: Codable {
+        public let baseDirectory: State
+        public let selectedFolder: FolderCategory
+        public let selectorSource: SelectorSource
+        public let selectorFile: SelectorState
+        public let defaultsSelectorPresent: Bool
+        public let defaultsSelectorValid: Bool?
+        public let defaultsSelectorMatchesFile: Bool?
+        public let selectedDatabase: DatabaseFile
+        public let alternateScan: ScanState
+        /// Nil means the count is unknown, including when inspection hit its bound.
+        public let alternateDirectoryCount: Int?
+        public let alternateDatabases: [DatabaseFile]
+
+        public var sanitizedDescription: String {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            guard let data = try? encoder.encode(self), let text = String(data: data, encoding: .utf8) else {
+                return "{\"diagnostic\":\"unavailable\"}"
+            }
+            return text
+        }
+    }
+
+    private static let maximumSelectorBytes = 1024
+    private static let maximumAlternateEntries = 64
+    private static let notInspected = DatabaseFile(state: .notInspected, sizeCategory: .unknown, sizeBytes: nil)
+
+    /// `baseDirectory` must be the app's already-authorized database container. No alternate
+    /// database is selected, opened or repaired. This is a best-effort observation, not a snapshot.
+    public static func report(baseDirectory: URL, defaultsSelector: String?, fileManager: FileManager = .default) -> Report {
+        let defaultsValid = defaultsSelector.map(validFolderName)
+        let base = baseDirectory.standardizedFileURL
+        let baseState = baseDirectory.isFileURL ? directoryState(base, fileManager) : .unsafe
+        guard baseDirectory.isFileURL, baseState == .present else {
+            return Report(baseDirectory: baseDirectory.isFileURL ? baseState : .unsafe,
+                selectedFolder: .unavailable, selectorSource: .unavailable, selectorFile: .notInspected,
+                defaultsSelectorPresent: defaultsSelector != nil, defaultsSelectorValid: defaultsValid,
+                defaultsSelectorMatchesFile: nil, selectedDatabase: notInspected,
+                alternateScan: .notInspected, alternateDirectoryCount: nil, alternateDatabases: [])
+        }
+
+        let selector = inspectSelector(base.appendingPathComponent("storedPrimaryFolderName.txt"), fileManager)
+        let selectedName: String?
+        let source: SelectorSource
+        switch selector.state {
+        case .valid:
+            selectedName = selector.name; source = .file
+        case .missing:
+            selectedName = defaultsSelector ?? "grdb"
+            source = defaultsSelector == nil ? .defaultFallback : .defaults
+        case .invalid, .unreadable, .unsafe, .notInspected:
+            // The live resolver might fall back after a failed file read. Do not claim a selection
+            // while that evidence is unavailable, or inspect a path from malformed selector data.
+            selectedName = nil; source = .unavailable
+        }
+        let selectedCategory: FolderCategory
+        let selectedDatabase: DatabaseFile
+        if let selectedName {
+            if validFolderName(selectedName) {
+                selectedCategory = selectedName == "grdb" ? .defaultFolder : .customFolder
+                selectedDatabase = inspectDatabase(in: base.appendingPathComponent(selectedName),
+                    exactSize: true, fileManager: fileManager)
+            } else {
+                selectedCategory = .unsafe; selectedDatabase = notInspected
+            }
+        } else {
+            selectedCategory = .unavailable; selectedDatabase = notInspected
+        }
+
+        var scan: ScanState = .complete
+        var alternates: [DatabaseFile] = []
+        do {
+            // A single, non-recursive listing; file metadata checks and output are capped.
+            let names = try fileManager.contentsOfDirectory(atPath: base.path)
+                .filter { $0.hasPrefix("grdb") && $0 != selectedName }.sorted()
+            if names.count > maximumAlternateEntries { scan = .incomplete }
+            for name in names.prefix(maximumAlternateEntries) {
+                guard validFolderName(name) else { scan = .incomplete; continue }
+                let directory = base.appendingPathComponent(name)
+                switch directoryState(directory, fileManager) {
+                case .present:
+                    alternates.append(inspectDatabase(in: directory, exactSize: false, fileManager: fileManager))
+                case .missing:
+                    scan = .incomplete // The listing changed during inspection.
+                case .unsafe, .unavailable, .notInspected:
+                    scan = .incomplete
+                }
+            }
+        } catch {
+            scan = .unavailable
+        }
+        // Order by public metadata, never by a private folder name in the serialized result.
+        alternates.sort {
+            ($0.state.rawValue + $0.sizeCategory.rawValue) < ($1.state.rawValue + $1.sizeCategory.rawValue)
+        }
+        return Report(baseDirectory: .present, selectedFolder: selectedCategory, selectorSource: source,
+            selectorFile: selector.state, defaultsSelectorPresent: defaultsSelector != nil,
+            defaultsSelectorValid: defaultsValid,
+            defaultsSelectorMatchesFile: selector.name.flatMap { name in defaultsSelector.map { $0 == name } },
+            selectedDatabase: selectedDatabase, alternateScan: scan,
+            alternateDirectoryCount: scan == .complete ? alternates.count : nil, alternateDatabases: alternates)
+    }
+
+    private static func validFolderName(_ name: String) -> Bool {
+        guard name.utf8.prefix(256).count <= 255, name.hasPrefix("grdb") else { return false }
+        return name.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0)
+            || (97...122).contains($0) || $0 == 45 || $0 == 95 }
+    }
+
+    private enum Observation { case missing, unavailable, present([FileAttributeKey: Any]) }
+
+    private static func attributes(_ url: URL, _ fileManager: FileManager) -> Observation {
+        do { return .present(try fileManager.attributesOfItem(atPath: url.path)) }
+        catch {
+            let error = error as NSError
+            if error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
+                return .missing
+            }
+            return .unavailable
+        }
+    }
+
+    private static func directoryState(_ url: URL, _ fileManager: FileManager) -> State {
+        switch attributes(url, fileManager) {
+        case .missing: return .missing
+        case .unavailable: return .unavailable
+        case .present(let values): return values[.type] as? FileAttributeType == .typeDirectory ? .present : .unsafe
+        }
+    }
+
+    private static func inspectDatabase(in directory: URL, exactSize: Bool, fileManager: FileManager) -> DatabaseFile {
+        let directoryStatus = directoryState(directory, fileManager)
+        guard directoryStatus == .present else {
+            return DatabaseFile(state: directoryStatus, sizeCategory: .unknown, sizeBytes: nil)
+        }
+        switch attributes(directory.appendingPathComponent("signal.sqlite"), fileManager) {
+        case .missing: return DatabaseFile(state: .missing, sizeCategory: .unknown, sizeBytes: nil)
+        case .unavailable: return DatabaseFile(state: .unavailable, sizeCategory: .unknown, sizeBytes: nil)
+        case .present(let values):
+            guard values[.type] as? FileAttributeType == .typeRegular else {
+                return DatabaseFile(state: .unsafe, sizeCategory: .unknown, sizeBytes: nil)
+            }
+            let size = (values[.size] as? NSNumber)?.uint64Value
+            let category: SizeCategory
+            if let size {
+                switch size {
+                case 0: category = .empty
+                case 1..<(1024 * 1024): category = .underOneMiB
+                case (1024 * 1024)..<(10 * 1024 * 1024): category = .oneToTenMiB
+                case (10 * 1024 * 1024)..<(100 * 1024 * 1024): category = .tenToHundredMiB
+                default: category = .hundredMiBOrMore
+                }
+            } else {
+                category = .unknown
+            }
+            return DatabaseFile(state: .present, sizeCategory: category, sizeBytes: exactSize ? size : nil)
+        }
+    }
+
+    private static func inspectSelector(_ url: URL, _ fileManager: FileManager) -> (state: SelectorState, name: String?) {
+        switch attributes(url, fileManager) {
+        case .missing: return (.missing, nil)
+        case .unavailable: return (.unreadable, nil)
+        case .present(let values):
+            guard values[.type] as? FileAttributeType == .typeRegular else { return (.unsafe, nil) }
+            guard let size = (values[.size] as? NSNumber)?.uint64Value,
+                  size > 0, size <= UInt64(maximumSelectorBytes) else { return (.invalid, nil) }
+        }
+        // NOFOLLOW closes the selector-file symlink race; NONBLOCK prevents a substituted FIFO
+        // from blocking launch. Revalidate the opened file and read at most 1025 bytes.
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { return (.unreadable, nil) }
+        defer { close(descriptor) }
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else { return (.unreadable, nil) }
+        guard metadata.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG) else { return (.unsafe, nil) }
+        var bytes = [UInt8](repeating: 0, count: maximumSelectorBytes + 1)
+        let count = bytes.withUnsafeMutableBytes { Darwin.read(descriptor, $0.baseAddress, $0.count) }
+        guard count >= 0 else { return (.unreadable, nil) }
+        guard count > 0, count <= maximumSelectorBytes,
+              let name = String(bytes: bytes.prefix(count), encoding: .utf8), validFolderName(name) else {
+            return (.invalid, nil)
+        }
+        return (.valid, name)
+    }
+}
 
 public class GRDBDatabaseStorageAdapter {
 
