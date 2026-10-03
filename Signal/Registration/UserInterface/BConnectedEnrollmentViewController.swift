@@ -266,6 +266,7 @@ struct BConnectedEnrollmentView: View {
             }.padding(.top, 12)
             Label("A private space to stay connected", systemImage: "lock")
                 .font(.caption).foregroundStyle(SignupStyle.secondary).frame(maxWidth: .infinity).padding(.top, 4)
+            helpButton
         }
     }
     @ViewBuilder private var phoneRow: some View {
