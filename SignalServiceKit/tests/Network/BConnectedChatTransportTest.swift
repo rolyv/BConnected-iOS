@@ -10,6 +10,118 @@ final class BConnectedChatTransportTest: XCTestCase {
     private typealias Capability = BConnectedTransportCapability
     private let chatOnly: Set<Capability> = [.authenticatedChat, .unauthenticatedChat, .provisioning, .chatPreconnect, .networkChange, .stories]
 
+    func testOwnedIdentifiedSendUsesAuthenticatedRESTWithOriginalPayload() async throws {
+        let destination = Aci.constantForTesting("00000000-0000-4000-8000-000000000001")
+        let content = CiphertextMessage(try PlaintextContent(bytes: [0xC0, 1, 2, 3, 0x80]))
+        let message = DeviceMessage.unsealed(.init(deviceId: .primary, registrationId: 123, contents: content))
+        var attempts = 0
+        try await BConnectedIdentifiedMessageTransport.send(to: destination, messages: [message],
+            timestamp: 1791172800000, online: false, urgent: true) { request in
+            attempts += 1
+            XCTAssertEqual(request.method, "PUT")
+            XCTAssertEqual(request.url.relativeString, "v1/messages/00000000-0000-4000-8000-000000000001")
+            XCTAssertEqual(try request.auth.connectionType, .identified)
+            XCTAssertEqual(request.maxResponseSize, 4096)
+            guard case .encodable(let payload) = request.body else { throw OWSAssertionError("Expected message JSON") }
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
+            XCTAssertEqual(Set(json.keys), ["messages", "timestamp", "online", "urgent"])
+            XCTAssertEqual(json["timestamp"] as? UInt64, 1791172800000)
+            XCTAssertEqual(json["online"] as? Bool, false)
+            XCTAssertEqual(json["urgent"] as? Bool, true)
+            let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+            XCTAssertEqual(messages.count, 1)
+            XCTAssertEqual(Set(messages[0].keys), ["type", "destinationDeviceId", "destinationRegistrationId", "content"])
+            XCTAssertEqual(messages[0]["type"] as? Int, 8)
+            XCTAssertEqual(messages[0]["destinationDeviceId"] as? Int, 1)
+            XCTAssertEqual(messages[0]["destinationRegistrationId"] as? Int, 123)
+            XCTAssertEqual(messages[0]["content"] as? String, content.serialize().base64EncodedString())
+            return HTTPResponse(requestUrl: request.url, status: 200, headers: HttpHeaders(), bodyData: Data(#"{"needsSync":false}"#.utf8))
+        }
+        XCTAssertEqual(attempts, 1)
+    }
+
+    func testOwnedSendMapsStaleRegistrationToExistingSessionRecovery() async throws {
+        for throwsHTTPError in [false, true] {
+            let failure = await ownedSendFailure(status: 410, body: #"{"staleDevices":[1]}"#, throwsHTTPError: throwsHTTPError)
+            guard case SignalError.mismatchedDevices(let entries, _) = failure else { return XCTFail("Expected stale session recovery") }
+            XCTAssertEqual(entries.count, 1)
+            XCTAssertEqual(entries[0].account, Aci.constantForTesting("00000000-0000-4000-8000-000000000001"))
+            XCTAssertEqual(entries[0].staleDevices, [1])
+            XCTAssertTrue(entries[0].missingDevices.isEmpty)
+            XCTAssertTrue(entries[0].extraDevices.isEmpty)
+        }
+    }
+
+    func testOwnedSendMapsMissingPrimaryWithoutChangingOtherRecipients() async throws {
+        let failure = await ownedSendFailure(status: 409, body: #"{"missingDevices":[1],"extraDevices":[]}"#)
+        guard case SignalError.mismatchedDevices(let entries, _) = failure else { return XCTFail("Expected missing-device recovery") }
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].account, Aci.constantForTesting("00000000-0000-4000-8000-000000000001"))
+        XCTAssertEqual(entries[0].missingDevices, [1])
+        XCTAssertTrue(entries[0].staleDevices.isEmpty)
+    }
+
+    func testOwnedSendDoesNotReconcileMalformedOrSecondaryDeviceResponses() async {
+        for (status, body) in [
+            (410, #"{"staleDevices":[2]}"#), (410, #"{"staleDevices":[true]}"#),
+            (410, #"{"staleDevices":[1,1]}"#), (410, #"{"staleDevices":[]}"#),
+            (409, #"{"missingDevices":[1],"extraDevices":[1]}"#),
+            (409, #"{"missingDevices":[],"extraDevices":[]}"#),
+            (409, #"{"missingDevices":[2],"extraDevices":[]}"#), (409, "{}")
+        ] {
+            let failure = await ownedSendFailure(status: status, body: body)
+            XCTAssertEqual(failure.httpStatusCode, status)
+            if case SignalError.mismatchedDevices = failure { XCTFail("Malformed response must not alter local sessions") }
+        }
+    }
+
+    func testOwnedSendRequiresAnActualSingleDeviceAcknowledgement() async {
+        for body in ["{}", #"{"needsSync":true}"#, #"{"needsSync":"false"}"#, "invalid"] {
+            let failure = await ownedSendFailure(status: 200, body: body)
+            guard case OWSHTTPError.networkFailure(.invalidResponseStatus) = failure else { return XCTFail("Invalid acknowledgement accepted") }
+        }
+        for status in [401, 403, 429, 503] {
+            let failure = await ownedSendFailure(status: status, body: "{}", throwsHTTPError: true)
+            XCTAssertEqual(failure.httpStatusCode, status)
+        }
+        let missing = await ownedSendFailure(status: 404, body: "{}")
+        guard case SignalError.serviceIdNotFound = missing else { return XCTFail("Expected recipient unavailable") }
+    }
+
+    func testOwnedSendRejectsSealedSecondaryAndEmptyPayloadBeforeNetwork() async throws {
+        let content = CiphertextMessage(try PlaintextContent(bytes: [0xC0]))
+        let primary = DeviceMessage.unsealed(.init(deviceId: .primary, registrationId: 123, contents: content))
+        let secondary = DeviceMessage.unsealed(.init(deviceId: DeviceId(validating: 2)!, registrationId: 123, contents: content))
+        let sealed = DeviceMessage.sealedSender(.init(deviceId: .primary, registrationId: 123, contents: Data([1])))
+        let cases: [[DeviceMessage]] = [[], [primary, primary], [secondary], [sealed]]
+        for messages in cases {
+            do {
+                try await BConnectedIdentifiedMessageTransport.send(
+                    to: Aci.constantForTesting("00000000-0000-4000-8000-000000000001"), messages: messages,
+                    timestamp: 1, online: false, urgent: true
+                ) { _ in XCTFail("Unsupported send reached network"); throw URLError(.badURL) }
+                XCTFail("Unsupported send accepted")
+            } catch BConnectedTransportError.unavailable(.authenticatedChat) {} catch { XCTFail("Unexpected failure: \(error)") }
+        }
+    }
+
+    private func ownedSendFailure(status: Int, body: String, throwsHTTPError: Bool = false) async -> any Error {
+        do {
+            let content = CiphertextMessage(try PlaintextContent(bytes: [0xC0]))
+            try await BConnectedIdentifiedMessageTransport.send(
+                to: Aci.constantForTesting("00000000-0000-4000-8000-000000000001"),
+                messages: [.unsealed(.init(deviceId: .primary, registrationId: 123, contents: content))],
+                timestamp: 1, online: false, urgent: true
+            ) { request in
+                let response = HTTPResponse(requestUrl: request.url, status: status, headers: HttpHeaders(), bodyData: Data(body.utf8))
+                if throwsHTTPError { throw response.asError() }
+                return response
+            }
+            XCTFail("Expected send failure")
+            return OWSAssertionError("Unexpected success")
+        } catch { return error }
+    }
+
     func testUnavailableAnonymousPrekeyFetchUsesExplicitlyAllowedIdentifiedFallback() async throws {
         var attempts: [Bool] = []
         let maker = makeRequestMaker(options: [.allowIdentifiedFallback]) { request in

@@ -7,7 +7,7 @@ import UIKit
 import Network
 import libPhoneNumber_iOS
 
-/// Owned enrollment has no escape into legacy registration, linking, or recovery.
+/// Owned enrollment and operator-assisted recovery never enter legacy registration or linking.
 class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollmentView> {
     private let pathMonitor = NWPathMonitor()
     private let model: BConnectedEnrollmentViewModel
@@ -19,10 +19,11 @@ class BConnectedEnrollmentViewController: UIHostingController<BConnectedEnrollme
 
     convenience init(initialRegistration: Bool, makeCoordinator: @MainActor (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
          makeCommunity: @escaping @MainActor (BConnectedEnrollmentEndpoint, BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator,
+         makeRecovery: @escaping @MainActor (BConnectedEnrollmentEndpoint) throws -> BConnectedRecoveryCoordinator,
          makePreparation: @escaping @MainActor (String) async throws -> BConnectedEnrollmentPreparation,
          onCompleted: @escaping @MainActor () -> Void) {
         let model = BConnectedEnrollmentViewModel(initialRegistration: initialRegistration, makeCoordinator: makeCoordinator,
-            makeCommunity: makeCommunity, makePreparation: makePreparation, onCompleted: onCompleted)
+            makeCommunity: makeCommunity, makeRecovery: makeRecovery, makePreparation: makePreparation, onCompleted: onCompleted)
         self.init(model: model)
         pathMonitor.pathUpdateHandler = { [weak model] path in
             Task { @MainActor in model?.setOnline(path.status == .satisfied) }
@@ -132,7 +133,8 @@ struct BConnectedEnrollmentView: View {
             ScrollViewReader { scroll in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        if model.screen == .details { details }
+                        if model.recoveryMode, let recovery = model.recovery { BConnectedRecoveryView(model: recovery) }
+                        else if model.screen == .details { details }
                         else if model.screen == .verifying { verification }
                         else { stateContent }
                     }
@@ -421,6 +423,10 @@ struct BConnectedEnrollmentView: View {
                     secondary("Contact the alumni administrator who shared BConnected Chat with you.")
                     if model.hasSavedSetup && !model.stateUnreadable { secondary("Your progress is saved. There’s no need to start over.") }
                     primary("Email the alumni team") { openURL(URL(string: "mailto:alumni@belenjesuit.org")!) }
+                    if model.recovery != nil && !model.recoveryMode {
+                        secondary("Previously used BConnected Chat on this account? Recovery requires fresh phone verification and approval from the alumni team.")
+                        primary("Recover an existing account") { helpSheet = false; model.startRecovery() }
+                    }
                     Button(copiedHelp ? "Help summary copied" : "Copy help summary") {
                         // No number, name, OTP, raw IDs, credentials, keys, or transport errors.
                         let diagnostics = BConnectedDatabaseDiagnostics.report(
@@ -643,5 +649,91 @@ struct SignupPhoneField: UIViewRepresentable {
             if let position = field.position(from: field.beginningOfDocument, offset: Int(translated)) { field.selectedTextRange = field.textRange(from: position, to: position) }
             return false
         }
+    }
+}
+
+/// The operator approves the exact request out of band; this screen never accepts an account ID or grant token.
+private struct BConnectedRecoveryView: View {
+    @ObservedObject var model: BConnectedRecoveryViewModel
+    @Environment(\.openURL) private var openURL
+    @State private var confirmReplacement = false
+    @State private var confirmResend = false
+    @State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text("Recover your account").font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+            Text("Keep your alumni account. Recovery replaces your sign-in credentials and encryption keys. Your safety number will change. Old messages, queued messages and missing group keys cannot be restored.")
+                .foregroundStyle(SignupStyle.secondary)
+            if !model.hasSavedRecovery {
+                TextField("Phone number with country code", text: $model.phone)
+                    .keyboardType(.phonePad).textContentType(.telephoneNumber)
+                    .padding(14).background(SignupStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityLabel("Phone number including country code")
+                consequences
+                action("Start recovery", enabled: model.canAct && model.acceptedConsequences) { model.begin() }
+                Text("Starting saves a recovery request. You choose when to send a verification code.").font(.footnote)
+            } else {
+                switch model.progress?.observation?.state {
+                case .verification:
+                    Text("Verify \(model.phone) with a new code. Previous signup codes cannot authorize recovery.")
+                    TextField("Verification code", text: $model.code).keyboardType(.numberPad).textContentType(.oneTimeCode)
+                        .padding(14).background(SignupStyle.surface, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityLabel("Recovery verification code")
+                    action("Verify phone number", enabled: model.canCheck && !model.code.isEmpty) { model.verifyCode() }
+                    action(model.progress?.sendOutcomeUncertain == true ? "Request another code" : "Send verification code", enabled: model.canSend) {
+                        if model.progress?.sendOutcomeUncertain == true { confirmResend = true } else { model.sendCode() }
+                    }
+                    if let seconds = model.smsWait, seconds > 0 { Text("Check again in \(BConnectedEnrollmentViewModel.duration(seconds)) before requesting another code.").font(.footnote) }
+                case .awaitingAuthorization:
+                    Text("Your phone is verified. The alumni team must approve this exact recovery before your account can be replaced.")
+                    if let id = model.progress?.observation?.recoveryId {
+                        Text("Recovery request").font(.headline)
+                        Text(id).font(.footnote.monospaced()).textSelection(.enabled)
+                        Button(copied ? "Request copied" : "Copy recovery request") { UIPasteboard.general.string = id; copied = true }
+                    }
+                case .authorized:
+                    Text("The alumni team approved recovery for \(model.progress?.observation?.fullName ?? "your account"). Replacing the account will sign out the old device and discard messages waiting for its old keys.")
+                    consequences
+                    action("Replace keys and recover account", enabled: model.canReplace) { confirmReplacement = true }
+                case .recovering:
+                    Text("Your replacement is in progress. Your recovery is saved. Check its status to continue safely.")
+                case .active:
+                    Text(model.ready ? "Your account is ready." : "Your replacement is saved. We’re completing secure setup on this device.")
+                    if !model.ready { action("Continue setup", enabled: model.canAct) { model.continueSetup() } }
+                case .suspended:
+                    Text("This recovery cannot continue. Contact the alumni team.")
+                case nil:
+                    Text("Your recovery request is saved. Check its status before continuing.")
+                }
+                if !model.ready { action("Check recovery status", enabled: model.canAct) { model.refresh() } }
+            }
+            if model.busy { ProgressView("Checking saved recovery…") }
+            if !model.online { Text("You’re offline. Your recovery is saved.").foregroundStyle(SignupStyle.secondary) }
+            if let seconds = model.waitSeconds, seconds > 0 { Text("Please wait \(BConnectedEnrollmentViewModel.duration(seconds)) before checking again.") }
+            if let message = model.message { Text(message).foregroundStyle(SignupStyle.error) }
+            Button("Email the alumni team") { openURL(URL(string: "mailto:alumni@belenjesuit.org")!) }.frame(minHeight: 44)
+        }
+        .confirmationDialog("Replace this account’s keys?", isPresented: $confirmReplacement, titleVisibility: .visible) {
+            Button("Replace keys and recover account", role: .destructive) { model.replaceAccount() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The old device will lose access. Your safety number changes, and old queued messages will be discarded. Your alumni account stays the same.")
+        }
+        .confirmationDialog("Request another recovery code?", isPresented: $confirmResend, titleVisibility: .visible) {
+            Button("Send another code") { model.sendCode(confirmedUncertain: true) }
+            Button("Keep waiting", role: .cancel) {}
+        } message: { Text("The previous text may still arrive. This action requests another code.") }
+    }
+    private var consequences: some View {
+        Toggle("I understand that recovery replaces my keys and cannot restore missing messages.", isOn: $model.acceptedConsequences)
+            .disabled(model.busy)
+    }
+    private func action(_ title: String, enabled: Bool, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            Text(title).font(.body.weight(.semibold)).multilineTextAlignment(.center)
+                .padding(16).frame(maxWidth: .infinity, minHeight: 54)
+        }.buttonStyle(.plain).background(SignupStyle.gold.opacity(enabled ? 1 : 0.5), in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(SignupStyle.navy).disabled(!enabled)
     }
 }

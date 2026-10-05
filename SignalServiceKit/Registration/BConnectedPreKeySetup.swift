@@ -90,12 +90,12 @@ enum BConnectedPreKeySetup {
         return try encoder.encode(record)
     }
     private static func requireStored(_ record: BConnectedEnrollmentRecord, tx: DBReadTransaction) throws {
-        guard let bytes = KeyValueStore(collection: "BConnectedEnrollment.v1").getData("attempt", transaction: tx),
+        guard let bytes = KeyValueStore(collection: record.journalScope.collection).getData("attempt", transaction: tx),
               try encoded(JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)) == encoded(record) else {
             throw BConnectedEnrollmentError.immutableConflict
         }
     }
     private static func save(_ record: BConnectedEnrollmentRecord, tx: DBWriteTransaction) throws {
-        KeyValueStore(collection: "BConnectedEnrollment.v1").setData(try encoded(record), key: "attempt", transaction: tx)
+        KeyValueStore(collection: record.journalScope.collection).setData(try encoded(record), key: "attempt", transaction: tx)
     }
 }

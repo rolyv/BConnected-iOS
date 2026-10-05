@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0E6D9230168E001207FB629C /* BConnectedIdentifiedMessageTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC90279818297C3126C57259 /* BConnectedIdentifiedMessageTransport.swift */; };
 		BC1F00000000000000000001 /* BConnectedPinMegaphoneTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC1F00000000000000000002 /* BConnectedPinMegaphoneTest.swift */; };
 		BC0F01000000000000000001 /* AppVersionTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0F01000000000000000002 /* AppVersionTest.swift */; };
 		BC0A03000000000000000001 /* bconnected-account-acceptance-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */; };
@@ -14,12 +15,15 @@
 		BC0E04000000000000000003 /* BConnectedCommunityEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */; };
 		BC0E04000000000000000001 /* BConnectedOwnedHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */; };
 		BC0E03000000000000000005 /* BConnectedEnrollmentViewModelTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E03000000000000000006 /* BConnectedEnrollmentViewModelTest.swift */; };
+		A6A16E0785B512A9E706C084 /* BConnectedRecoveryViewModelTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E329C563018D5DA08E06D2 /* BConnectedRecoveryViewModelTest.swift */; };
 		BC0E03000000000000000003 /* BConnectedEnrollmentViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E03000000000000000004 /* BConnectedEnrollmentViewModel.swift */; };
+		42DC33CAD8CE5A49BBB62553 /* BConnectedRecoveryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBA38D39F7619B5A6E8F48AE /* BConnectedRecoveryViewModel.swift */; };
 		BC0E03000000000000000001 /* BConnectedEnrollmentViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E03000000000000000002 /* BConnectedEnrollmentViewController.swift */; };
 		BC0E02000000000000000007 /* mobile-enrollment-v1-responses.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000008 /* mobile-enrollment-v1-responses.json */; };
 		BC0E02000000000000000005 /* mobile-enrollment-v1-invalid.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */; };
 		BC0E02000000000000000003 /* mobile-enrollment-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000004 /* mobile-enrollment-v1.json */; };
 		BC0E02000000000000000001 /* BConnectedEnrollmentTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */; };
+		9CBC6DA155A1C69FFF42EA36 /* BConnectedRecoveryTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE5921F92482A9E4A155A61 /* BConnectedRecoveryTest.swift */; };
 		BC2000000000000000000005 /* BConnectedDirectoryTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2000000000000000000006 /* BConnectedDirectoryTest.swift */; };
 		BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */; };
 		BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */; };
@@ -32,6 +36,7 @@
 		BC0E08000000000000000001 /* BConnectedGroupManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E08000000000000000002 /* BConnectedGroupManifest.swift */; };
 		BC0E01000000000000000005 /* BConnectedEnrollmentClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */; };
 		BC0E01000000000000000003 /* BConnectedEnrollmentState.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */; };
+		8363A54C0075183D5CBB8FA9 /* BConnectedRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B2746CD1F2D8426E5967E1 /* BConnectedRecovery.swift */; };
 		BC0E01000000000000000001 /* BConnectedEnrollmentWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0E01000000000000000002 /* BConnectedEnrollmentWire.swift */; };
 		BC0C08000000000000000001 /* BConnectedAppTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C08000000000000000002 /* BConnectedAppTransport.swift */; };
 		BC0C08000000000000000003 /* BConnectedAppTransportTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC0C08000000000000000004 /* BConnectedAppTransportTest.swift */; };
@@ -4305,6 +4310,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		EC90279818297C3126C57259 /* BConnectedIdentifiedMessageTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedIdentifiedMessageTransport.swift; sourceTree = "<group>"; };
 		BC1F00000000000000000002 /* BConnectedPinMegaphoneTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedPinMegaphoneTest.swift; sourceTree = "<group>"; };
 		BC0F01000000000000000002 /* AppVersionTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppVersionTest.swift; sourceTree = "<group>"; };
 		BC0A03000000000000000002 /* bconnected-account-acceptance-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/bconnected-account-acceptance-v1.json"; sourceTree = "<group>"; };
@@ -4312,12 +4318,15 @@
 		BC0E04000000000000000004 /* BConnectedCommunityEnrollment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedCommunityEnrollment.swift; sourceTree = "<group>"; };
 		BC0E04000000000000000002 /* BConnectedOwnedHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedOwnedHTTP.swift; sourceTree = "<group>"; };
 		BC0E03000000000000000006 /* BConnectedEnrollmentViewModelTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentViewModelTest.swift; sourceTree = "<group>"; };
+		29E329C563018D5DA08E06D2 /* BConnectedRecoveryViewModelTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecoveryViewModelTest.swift; sourceTree = "<group>"; };
 		BC0E03000000000000000004 /* BConnectedEnrollmentViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentViewModel.swift; sourceTree = "<group>"; };
+		CBA38D39F7619B5A6E8F48AE /* BConnectedRecoveryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecoveryViewModel.swift; sourceTree = "<group>"; };
 		BC0E03000000000000000002 /* BConnectedEnrollmentViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentViewController.swift; sourceTree = "<group>"; };
 		BC0E02000000000000000008 /* mobile-enrollment-v1-responses.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1-responses.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000006 /* mobile-enrollment-v1-invalid.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1-invalid.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000004 /* mobile-enrollment-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Resources/mobile-enrollment-v1.json"; sourceTree = "<group>"; };
 		BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BConnectedEnrollmentTest.swift"; sourceTree = "<group>"; };
+		9EE5921F92482A9E4A155A61 /* BConnectedRecoveryTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BConnectedRecoveryTest.swift"; sourceTree = "<group>"; };
 		BC2000000000000000000006 /* BConnectedDirectoryTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedDirectoryTest.swift; sourceTree = "<group>"; };
 		BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecipientLookupTest.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentStore.swift; sourceTree = "<group>"; };
@@ -4330,6 +4339,7 @@
 		BC0E08000000000000000002 /* BConnectedGroupManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedGroupManifest.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentClient.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentState.swift; sourceTree = "<group>"; };
+		A4B2746CD1F2D8426E5967E1 /* BConnectedRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedRecovery.swift; sourceTree = "<group>"; };
 		BC0E01000000000000000002 /* BConnectedEnrollmentWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedEnrollmentWire.swift; sourceTree = "<group>"; };
 		BC0C08000000000000000002 /* BConnectedAppTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedAppTransport.swift; sourceTree = "<group>"; };
 		BC0C08000000000000000004 /* BConnectedAppTransportTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BConnectedAppTransportTest.swift; sourceTree = "<group>"; };
@@ -10394,6 +10404,7 @@
 				6600F355298C903000B1EDB7 /* RegistrationSessionManager.swift */,
 				BC0E01000000000000000002 /* BConnectedEnrollmentWire.swift */,
 				BC0E01000000000000000004 /* BConnectedEnrollmentState.swift */,
+				A4B2746CD1F2D8426E5967E1 /* BConnectedRecovery.swift */,
 				BC0E01000000000000000006 /* BConnectedEnrollmentClient.swift */,
 				BC0E01000000000000000008 /* BConnectedEnrollmentStore.swift */,
 				BC2000000000000000000002 /* BConnectedDirectoryClient.swift */,
@@ -10416,6 +10427,7 @@
 			children = (
 				6600F366298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift */,
 				BC0E02000000000000000002 /* BConnectedEnrollmentTest.swift */,
+				9EE5921F92482A9E4A155A61 /* BConnectedRecoveryTest.swift */,
 				BC2000000000000000000006 /* BConnectedDirectoryTest.swift */,
 				BC0E09000000000000000004 /* BConnectedRecipientLookupTest.swift */,
 				BC0E02000000000000000004 /* mobile-enrollment-v1.json */,
@@ -10493,6 +10505,7 @@
 			isa = PBXGroup;
 			children = (
 				BC0E03000000000000000006 /* BConnectedEnrollmentViewModelTest.swift */,
+				29E329C563018D5DA08E06D2 /* BConnectedRecoveryViewModelTest.swift */,
 				661278062996BA7800A1D5A1 /* RegistrationCoordinatorTest.swift */,
 				661278092996BAB400A1D5A1 /* RegistrationCoordinatorTestShims.swift */,
 			);
@@ -11016,6 +11029,7 @@
 				F9440E7129C0FA490016FE95 /* RegistrationReglockTimeoutViewController.swift */,
 				C14366252DA55CF8008DE746 /* RegistrationRestoreFromBackupConfirmationViewController.swift */,
 				BC0E03000000000000000004 /* BConnectedEnrollmentViewModel.swift */,
+				CBA38D39F7619B5A6E8F48AE /* BConnectedRecoveryViewModel.swift */,
 				BC0E03000000000000000002 /* BConnectedEnrollmentViewController.swift */,
 				F933FC3E2992E77300D78DB0 /* RegistrationSplashViewController.swift */,
 				C1A979882EE38D1F005EC945 /* RegistrationTransferStatusPresenter.swift */,
@@ -15262,6 +15276,7 @@
 				F9C5C940289453B100548EEE /* BlockingManager.swift */,
 				50A5AA982A7449A100CF2ECC /* DecryptedIncomingEnvelope.swift */,
 				F9C5C943289453B100548EEE /* DeliveryReceiptContext.swift */,
+				EC90279818297C3126C57259 /* BConnectedIdentifiedMessageTransport.swift */,
 				50E5E4B029932D9B00E15A1C /* DeviceMessage.swift */,
 				F9C5C99D289453B100548EEE /* EarlyMessageManager.swift */,
 				F9C5C92B289453B100548EEE /* FailedMessagesJob.swift */,
@@ -19265,6 +19280,7 @@
 				F9440E7229C0FA490016FE95 /* RegistrationReglockTimeoutViewController.swift in Sources */,
 				C14366262DA55CF8008DE746 /* RegistrationRestoreFromBackupConfirmationViewController.swift in Sources */,
 				BC0E03000000000000000003 /* BConnectedEnrollmentViewModel.swift in Sources */,
+				42DC33CAD8CE5A49BBB62553 /* BConnectedRecoveryViewModel.swift in Sources */,
 				BC0E03000000000000000001 /* BConnectedEnrollmentViewController.swift in Sources */,
 				F933FC3F2992E77300D78DB0 /* RegistrationSplashViewController.swift in Sources */,
 				6600F39029918CBF00B1EDB7 /* RegistrationStep.swift in Sources */,
@@ -19469,6 +19485,7 @@
 				E1D827DA2BDC1F7B0022C1AF /* ReactionBurstManagerTests.swift in Sources */,
 				E16B440E2BBF242C00D2583E /* ReactionsModelTest.swift in Sources */,
 				BC0E03000000000000000005 /* BConnectedEnrollmentViewModelTest.swift in Sources */,
+				A6A16E0785B512A9E706C084 /* BConnectedRecoveryViewModelTest.swift in Sources */,
 				661278082996BA8900A1D5A1 /* RegistrationCoordinatorTest.swift in Sources */,
 				6612780D2996BD0300A1D5A1 /* RegistrationCoordinatorTestShims.swift in Sources */,
 				040507192F8416090078B769 /* RemoteAnnouncementFetcher.swift in Sources */,
@@ -19836,6 +19853,7 @@
 				66F98DE02DB710F8009F1A86 /* DeviceBatteryLevelManager.swift in Sources */,
 				50F401CC2D483BF40094CA56 /* DeviceId.swift in Sources */,
 				505C2ED629971D4E00C23FB2 /* DeviceLimitExceededError.swift in Sources */,
+				0E6D9230168E001207FB629C /* BConnectedIdentifiedMessageTransport.swift in Sources */,
 				50E5E4B129932D9B00E15A1C /* DeviceMessage.swift in Sources */,
 				72345D192B9A17CF000237B3 /* DeviceOwnerAuthenticationType.swift in Sources */,
 				F9C5CDC3289453B400548EEE /* DeviceProvisioningService.swift in Sources */,
@@ -20407,6 +20425,7 @@
 				6600F356298C903000B1EDB7 /* RegistrationSessionManager.swift in Sources */,
 				BC0E01000000000000000001 /* BConnectedEnrollmentWire.swift in Sources */,
 				BC0E01000000000000000003 /* BConnectedEnrollmentState.swift in Sources */,
+				8363A54C0075183D5CBB8FA9 /* BConnectedRecovery.swift in Sources */,
 				BC0E01000000000000000005 /* BConnectedEnrollmentClient.swift in Sources */,
 				BC0E01000000000000000007 /* BConnectedEnrollmentStore.swift in Sources */,
 				BC2000000000000000000001 /* BConnectedDirectoryClient.swift in Sources */,
@@ -20948,6 +20967,7 @@
 				6600F351298C8BC900B1EDB7 /* RegistrationRequestFactoryTest.swift in Sources */,
 				6600F367298D9D1100B1EDB7 /* RegistrationSessionManagerTest.swift in Sources */,
 				BC0E02000000000000000001 /* BConnectedEnrollmentTest.swift in Sources */,
+				9CBC6DA155A1C69FFF42EA36 /* BConnectedRecoveryTest.swift in Sources */,
 		BC2000000000000000000005 /* BConnectedDirectoryTest.swift in Sources */,
 				BC0E09000000000000000003 /* BConnectedRecipientLookupTest.swift in Sources */,
 				BC0C01000000000000000003 /* BConnectedRegistrationKeyCommitmentTest.swift in Sources */,

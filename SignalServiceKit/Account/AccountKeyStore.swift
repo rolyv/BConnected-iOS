@@ -153,6 +153,16 @@ public class AccountKeyStore {
         return (hash, { try self.aepKvStore.writeValueOrThrow(entropy.rawString, forKey: Keys.aepKeyName, tx: tx) })
     }
 
+    func validateBConnectedEmptyEntropy(tx: DBReadTransaction) throws {
+        guard try aepKvStore.fetchKeysOrThrow(tx: tx).isEmpty,
+              try mrbkKvStore.fetchKeysOrThrow(tx: tx).isEmpty,
+              try syncStore.fetchKeysOrThrow(tx: tx).isEmpty,
+              try NewKeyValueStore(collection: "BackupSettingsStore").fetchKeysOrThrow(tx: tx).isEmpty,
+              try NewKeyValueStore(collection: "LocalFileBackups").fetchKeysOrThrow(tx: tx).isEmpty else {
+            throw BConnectedEnrollmentError.immutableConflict
+        }
+    }
+
     // MARK: -
 
     private static let isWaitingForKeysSyncKey = "isWaitingForKeysSync"

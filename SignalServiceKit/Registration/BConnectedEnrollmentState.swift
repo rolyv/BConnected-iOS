@@ -46,6 +46,12 @@ public struct BConnectedEnrollmentProgress {
     public let preKeyPublicationBlocked: Bool
 }
 
+/// Recovery uses a separate collection; existing signup material is never replaced or migrated.
+enum BConnectedEnrollmentJournal: String, Codable {
+    case signup, recovery
+    var collection: String { self == .signup ? "BConnectedEnrollment.v1" : "BConnectedRecovery.v1" }
+}
+
 /// All secret material stays in the encrypted app DB. Never log or reflect this record.
 struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebugStringConvertible {
     struct Identity: Codable {
@@ -97,6 +103,9 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     var accountEntropyReceipt: AccountEntropyReceipt?
     var publication: Publication?
     var preKeyPublication: PreKeyPublication?
+    var journal: BConnectedEnrollmentJournal?
+    var recoveryProfileName: String?
+    var journalScope: BConnectedEnrollmentJournal { journal ?? .signup }
 
     struct Publication: Codable, Equatable {
         enum State: String, Codable { case prepared, dispatched, acknowledged }
@@ -274,6 +283,12 @@ struct BConnectedEnrollmentRecord: Codable, CustomStringConvertible, CustomDebug
     /// Corrupt/version-mismatched state is terminal; never replace it with freshly generated keys.
     func validate() throws {
         guard version == 1, try BConnectedEnrollmentWire.base64(password).count == 32 else { throw BConnectedEnrollmentError.persistenceUnavailable }
+        if let recoveryProfileName {
+            guard journalScope == .recovery, let name = OWSUserProfile.NameComponent.parse(truncating: recoveryProfileName),
+                  !name.didTruncate, name.nameComponent.stringValue.rawValue == recoveryProfileName else {
+                throw BConnectedEnrollmentError.persistenceUnavailable
+            }
+        }
         try BConnectedEnrollmentWire.phone(phone)
         _ = try BConnectedEnrollmentWire.nonce(attempt)
         _ = try BConnectedEnrollmentWire.metadata(originalSignalAgent, limit: 256)

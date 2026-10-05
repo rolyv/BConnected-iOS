@@ -1881,6 +1881,20 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
         _ deviceMessages: [DeviceMessage],
         messageSend: OWSMessageSend,
     ) async throws {
+        #if !BCONNECTED_LEGACY_TRANSPORT
+        guard !messageSend.isSelfSend, !messageSend.message.isStorySend else {
+            throw BConnectedTransportError.unavailable(.authenticatedChat)
+        }
+        try await BConnectedIdentifiedMessageTransport.send(
+            to: messageSend.serviceId,
+            messages: deviceMessages,
+            timestamp: messageSend.message.timestamp,
+            online: messageSend.message.isOnline,
+            urgent: messageSend.message.isUrgent
+        ) { request in
+            try await SSKEnvironment.shared.networkManagerRef.asyncRequest(request)
+        }
+        #else
         let chatConnectionManager = DependenciesBridge.shared.chatConnectionManager
 
         var unsealedMessages = [SingleOutboundUnsealedMessage]()
@@ -1910,6 +1924,7 @@ public class MessageSenderImpl: MessageSender, DeviceMessageBuilder {
                 )
             }
         }
+        #endif
     }
 
     private func messageSendDidSucceed(

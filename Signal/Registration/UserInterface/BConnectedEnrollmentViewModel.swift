@@ -61,6 +61,8 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     @Published private(set) var stateUnreadable = false
     @Published private(set) var codeExpired = false
     @Published private(set) var phoneSetupExpired = false
+    @Published private(set) var recoveryMode = false
+    private(set) var recovery: BConnectedRecoveryViewModel?
     private var community: (any BConnectedSignupCommunity)?
     private var coordinator: (any BConnectedSignupAccount)?
     private let makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)?
@@ -79,6 +81,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     init(info: [String: Any] = Bundle.main.infoDictionary ?? [:], initialRegistration: Bool = true,
          makeCoordinator: (BConnectedEnrollmentEndpoint) -> BConnectedEnrollmentCoordinator,
          makeCommunity: ((BConnectedEnrollmentEndpoint, BConnectedEnrollmentEndpoint, BConnectedEnrollmentCoordinator) -> BConnectedCommunityEnrollmentCoordinator)? = nil,
+         makeRecovery: ((BConnectedEnrollmentEndpoint) throws -> BConnectedRecoveryCoordinator)? = nil,
          makePreparation: (@MainActor (String) async throws -> BConnectedEnrollmentPreparation)? = nil,
          onCompleted: @escaping @MainActor () -> Void = {}) {
         self.makePreparation = makePreparation; self.onCompleted = onCompleted
@@ -93,6 +96,11 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             self.coordinator = coordinator
             self.community = makeCommunity(communityEndpoint, endpoint, coordinator)
             try restore()
+            if let makeRecovery, let makePreparation {
+                let recovery = BConnectedRecoveryViewModel(service: try makeRecovery(endpoint), preparation: makePreparation, onCompleted: onCompleted)
+                self.recovery = recovery
+                self.recoveryMode = recovery.hasSavedRecovery
+            }
         } catch { stateUnreadable = true; screen = .help }
     }
 
@@ -187,6 +195,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
 
     func setActive(_ value: Bool) {
         active = value
+        if recoveryMode { recovery?.setActive(value); return }
         if !value {
             code = ""; task?.cancel(); nextPoll = nil; freshPhoneObservation = false
         } else { polls = 0; if busy { resumeAfterTask = true } else { resume() } }
@@ -194,6 +203,8 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     func setOnline(_ value: Bool) {
         let changed = isOnline != value
         isOnline = value
+        recovery?.setOnline(value)
+        if recoveryMode { return }
         if !value {
             // Cancellation revokes the pending user action even if connectivity returns
             // before its current request finishes. A reconnect may reconcile, never send later.
@@ -202,6 +213,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
         else if changed && active { polls = 0; if busy { resumeAfterTask = true } else { resume() } }
     }
     func tick(_ date: Date = Date()) {
+        if recoveryMode { recovery?.tick(date); return }
         clock = date
         if screen == .settingUp || screen == .resolvingMembership {
             if setupStartedAt == nil { setupStartedAt = startedAt ?? date }
@@ -213,15 +225,22 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     }
     private func checkActive() throws {
         try Task.checkCancellation()
-        guard active, isOnline else { throw CancellationError() }
+        guard active, isOnline, !recoveryMode else { throw CancellationError() }
     }
     func resume() {
+        guard !recoveryMode else { return }
         guard hasSavedSetup, screen != .help, screen != .ready else { return }
         if let requestRetryNotBefore, Date() < requestRetryNotBefore {
             nextPoll = requestRetryNotBefore
             return
         }
         run { try await self.reconcileAndDrive(explicitRetry: false) }
+    }
+    func startRecovery() {
+        guard let recovery else { return }
+        task?.cancel(); nextPoll = nil; freshPhoneObservation = false; code = ""
+        recoveryMode = true
+        recovery.setOnline(isOnline); recovery.setActive(active)
     }
     func submitDetails() {
         guard screen == .details, active, isOnline, !busy, !stateUnreadable, !frozen, validate(), let e164 = BConnectedPhoneEntry.parse(phone, region: region)?.e164,
@@ -322,7 +341,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     }
 
     private func run(_ action: @escaping @MainActor () async throws -> Void) {
-        guard active, isOnline, !busy, !stateUnreadable, community != nil, coordinator != nil, !completed else { return }
+        guard active, isOnline, !busy, !stateUnreadable, !recoveryMode, community != nil, coordinator != nil, !completed else { return }
         busy = true; startedAt = Date(); nextPoll = nil
         task = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -456,7 +475,7 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
     }
 
     private func schedulePoll() {
-        guard isOnline, !stateUnreadable else { return }
+        guard isOnline, !stateUnreadable, !recoveryMode else { return }
         let now = Date()
         if screen == .pending {
             nextPoll = max(now.addingTimeInterval(30), requestRetryNotBefore ?? .distantPast)

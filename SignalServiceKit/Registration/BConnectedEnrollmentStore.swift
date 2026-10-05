@@ -7,15 +7,18 @@ import CryptoKit
 /// A separate collection prevents upstream cancellation/reset from erasing possibly committed keys.
 final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     private let db: any DB
-    private let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+    private let values: KeyValueStore
+    private let journal: BConnectedEnrollmentJournal
     private let nativeInstaller: BConnectedNativeAccountInstaller?
     private let accountKeyStore: AccountKeyStore?
     private let publicationConfiguration: BConnectedPublicationConfiguration?
     private let udManager: OWSUDManager?
     init(db: any DB, nativeInstaller: BConnectedNativeAccountInstaller? = nil, accountKeyStore: AccountKeyStore? = nil,
-         publicationConfiguration: BConnectedPublicationConfiguration? = nil, udManager: OWSUDManager? = nil) {
+         publicationConfiguration: BConnectedPublicationConfiguration? = nil, udManager: OWSUDManager? = nil,
+         journal: BConnectedEnrollmentJournal = .signup) {
         self.db = db; self.nativeInstaller = nativeInstaller; self.accountKeyStore = accountKeyStore
         self.publicationConfiguration = publicationConfiguration; self.udManager = udManager
+        self.journal = journal; self.values = KeyValueStore(collection: journal.collection)
     }
     var supportsNativeInstallation: Bool { nativeInstaller != nil }
 
@@ -25,7 +28,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
         }
         try db.writeWithRollbackIfThrows { tx in
             let validated = try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: configuration,
-                expected: expected, tx: tx) {
+                expected: expected, tx: tx, journal: journal) {
                 let current = try preparePublication(configuration: configuration, tx: tx)
                 return try nativeInstaller.preparePreKeys(record: current, configuration: configuration, tx: tx)
             }
@@ -37,7 +40,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration, expected: BConnectedEnrollmentRecord?) throws -> BConnectedEnrollmentRecord {
         guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
         return try db.writeWithRollbackIfThrows { tx in
-            try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: configuration, expected: expected, tx: tx) {
+            try BConnectedLocalAccountSetup.validateAccountAcceptance(configuration: configuration, expected: expected, tx: tx, journal: journal) {
                 let current = try preparePublication(configuration: configuration, tx: tx)
                 return try nativeInstaller.preparePreKeys(record: current, configuration: configuration, tx: tx)
             }
@@ -47,7 +50,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     private func preparePublication(configuration: BConnectedPublicationConfiguration, tx: DBWriteTransaction) throws -> BConnectedEnrollmentRecord {
         guard let nativeInstaller, let accountKeyStore, let udManager,
               publicationConfiguration?.hash == configuration.hash else { throw BConnectedEnrollmentError.unavailable }
-        return try BConnectedLocalAccountSetup.preparePublication(tx: tx, configuration: configuration, accountKeyStore: accountKeyStore,
+        return try BConnectedLocalAccountSetup.preparePublication(tx: tx, configuration: configuration, accountKeyStore: accountKeyStore, journal: journal,
             sharePhoneNumber: udManager.phoneNumberSharingMode(tx: tx).orDefault == .everybody) { record, account, tx in
                 _ = try nativeInstaller.prepare(record: record, account: account, tx: tx)
             }
@@ -84,7 +87,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
     func prepareAccountEntropy() throws {
         guard let nativeInstaller, let accountKeyStore else { throw BConnectedEnrollmentError.unavailable }
         try db.writeWithRollbackIfThrows { tx in
-            try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx, accountKeyStore: accountKeyStore) { record, account, tx in
+            try BConnectedLocalAccountSetup.prepareAccountEntropy(tx: tx, accountKeyStore: accountKeyStore, journal: journal) { record, account, tx in
                 _ = try nativeInstaller.prepare(record: record, account: account, tx: tx)
             }
         }
@@ -92,7 +95,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
 
     func prepareLocalAccount() throws {
         guard let nativeInstaller else { throw BConnectedEnrollmentError.unavailable }
-        try BConnectedLocalAccountSetup.prepare(db: db) { record, account, tx in
+        try BConnectedLocalAccountSetup.prepare(db: db, journal: journal) { record, account, tx in
             // An installed-account receipt forces the native validator's exact-repeat path.
             // Discard its no-op closure; this operation never reinstalls or rotates native keys.
             _ = try nativeInstaller.prepare(record: record, account: account, tx: tx)
@@ -108,6 +111,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
             do {
                 record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
                 try record.validate()
+                guard record.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
                 guard try encoder.encode(record) == encoder.encode(expected) else { throw BConnectedEnrollmentError.immutableConflict }
             } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
             guard record.observation?.state == .active, record.observation?.registrationAuthorized == true,
@@ -134,6 +138,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
                     record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
                 }
                 try record?.validate()
+                guard record == nil || record?.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
             } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
             let existed = record != nil
             let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
@@ -147,6 +152,7 @@ final class BConnectedEnrollmentStore: BConnectedEnrollmentPersistence {
                     return result
                 }
                 try record.validate()
+                guard record.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
                 let bytes = try encoder.encode(record)
                 if bytes != original { values.setData(bytes, key: "attempt", transaction: tx) }
             } catch { throw BConnectedEnrollmentError.persistenceUnavailable }

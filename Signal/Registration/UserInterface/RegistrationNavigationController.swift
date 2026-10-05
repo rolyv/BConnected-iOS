@@ -200,6 +200,7 @@ public class RegistrationNavigationController: OWSNavigationController {
                     initialRegistration: initialRegistration,
                     makeCoordinator: owned.makeBConnectedEnrollmentCoordinator,
                     makeCommunity: owned.makeBConnectedCommunityCoordinator,
+                    makeRecovery: owned.makeBConnectedRecoveryCoordinator,
                     makePreparation: owned.prepareBConnectedEnrollment,
                     onCompleted: { [weak self] in
                         guard let self else { return }

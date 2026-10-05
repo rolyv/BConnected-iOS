@@ -11,12 +11,13 @@ enum BConnectedLocalAccountSetup {
     /// The same SQLCipher transaction checks the frozen journal before and after native validation.
     /// Only completed journals may enter the existing read-only native repeat paths.
     static func validateAccountAcceptance(configuration: BConnectedPublicationConfiguration,
-        expected: BConnectedEnrollmentRecord?, tx: DBWriteTransaction,
+        expected: BConnectedEnrollmentRecord?, tx: DBWriteTransaction, journal: BConnectedEnrollmentJournal = .signup,
         validateNative: () throws -> BConnectedEnrollmentRecord
     ) throws -> BConnectedEnrollmentRecord {
-        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        let values = KeyValueStore(collection: journal.collection)
         guard let bytes = values.getData("attempt", transaction: tx) else { throw BConnectedEnrollmentError.missingAttempt }
         let original = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
+        guard original.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
         try original.validateAccountAcceptance(configuration: configuration, expected: expected)
         let validated = try validateNative()
         try validated.validateAccountAcceptance(configuration: configuration, expected: original)
@@ -29,8 +30,9 @@ enum BConnectedLocalAccountSetup {
         step: BConnectedPublicationStep, acknowledge: Bool, tx: DBWriteTransaction
     ) throws -> BConnectedEnrollmentRecord {
         var record = record
+        let journal = record.journalScope
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        let values = KeyValueStore(collection: journal.collection)
         guard let stored = values.getData("attempt", transaction: tx),
               try encoder.encode(JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: stored)) == encoder.encode(record),
               try encoder.encode(record) == encoder.encode(expected), var publication = record.publication,
@@ -46,25 +48,26 @@ enum BConnectedLocalAccountSetup {
     }
 
     static func preparePublication(tx: DBWriteTransaction, configuration: BConnectedPublicationConfiguration,
-        accountKeyStore: AccountKeyStore, sharePhoneNumber: Bool,
+        accountKeyStore: AccountKeyStore, journal: BConnectedEnrollmentJournal = .signup, sharePhoneNumber: Bool,
         validateNative: (BConnectedEnrollmentRecord, BConnectedEnrollmentObservation.Account, DBWriteTransaction) throws -> Void
     ) throws -> BConnectedEnrollmentRecord {
-        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        let values = KeyValueStore(collection: journal.collection)
         guard let bytes = values.getData("attempt", transaction: tx) else { throw BConnectedEnrollmentError.missingAttempt }
         var record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
         try record.validate()
+        guard record.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
         guard let entropy = record.accountEntropyReceipt, let account = record.installedAccount,
               record.observation?.state == .active, record.observation?.registrationAuthorized == true,
               record.observation?.account == account else { throw BConnectedEnrollmentError.immutableConflict }
         // Because an entropy receipt exists, this validates native, profile, recipient and key state
         // without generating keys or writing. Existing blocks and all unrelated state are preserved.
-        try prepareAccountEntropy(tx: tx, accountKeyStore: accountKeyStore, validateNative: validateNative)
+        try prepareAccountEntropy(tx: tx, accountKeyStore: accountKeyStore, journal: journal, validateNative: validateNative)
         guard var profile = OWSUserProfile.getUserProfileForLocalUser(tx: tx), let key = profile.profileKey else {
             throw BConnectedEnrollmentError.immutableConflict
         }
         // Seed the first encrypted publication from the immutable community application.
         // Existing publications are never rewritten: their saved bytes and state hash remain authoritative.
-        if record.publication == nil,
+        if record.publication == nil, journal == .signup,
            let communityBytes = KeyValueStore(collection: "BConnectedCommunityEnrollment.v1").getData("session", transaction: tx) {
             let community = try JSONDecoder().decode(BConnectedCommunityRecord.self, from: communityBytes)
             try community.validate()
@@ -90,6 +93,16 @@ enum BConnectedLocalAccountSetup {
                       seeded.profileKey?.keyData == key.keyData else { throw BConnectedEnrollmentError.immutableConflict }
                 profile = seeded
             }
+        }
+        if record.publication == nil, journal == .recovery {
+            guard let name = record.recoveryProfileName else { throw BConnectedEnrollmentError.immutableConflict }
+            try tx.database.execute(sql: "UPDATE model_OWSUserProfile SET profileName = ?, familyName = NULL WHERE uniqueId = ?",
+                arguments: [name, profile.uniqueId])
+            guard let seeded = OWSUserProfile.getUserProfileForLocalUser(tx: tx), seeded.givenName == name,
+                  seeded.familyName == nil, seeded.profileKey?.keyData == key.keyData else {
+                throw BConnectedEnrollmentError.immutableConflict
+            }
+            profile = seeded
         }
         let state: [String: Any] = ["key": key.keyData.base64EncodedString(), "given": profile.givenName as Any? ?? NSNull(),
             "family": profile.familyName as Any? ?? NSNull(), "bio": profile.bio as Any? ?? NSNull(),
@@ -145,19 +158,21 @@ enum BConnectedLocalAccountSetup {
     static func prepareAccountEntropy(
         tx: DBWriteTransaction,
         accountKeyStore: AccountKeyStore,
+        journal: BConnectedEnrollmentJournal = .signup,
         validateNative: (BConnectedEnrollmentRecord, BConnectedEnrollmentObservation.Account, DBWriteTransaction) throws -> Void
     ) throws {
-        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        let values = KeyValueStore(collection: journal.collection)
         var record: BConnectedEnrollmentRecord
         do {
             guard let bytes = values.getData("attempt", transaction: tx) else { throw BConnectedEnrollmentError.missingAttempt }
             record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
             try record.validate()
+            guard record.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
         } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
         guard let localSetup = record.localSetupReceipt else { throw BConnectedEnrollmentError.immutableConflict }
         // The existing receipt guarantees this is a validating, read-only retry. It rechecks
         // native material, profile/UAK, exact self-recipient identity and current blocks.
-        try prepare(tx: tx, validateNative: validateNative)
+        try prepare(tx: tx, journal: journal, validateNative: validateNative)
         let entropy = try accountKeyStore.prepareBConnectedInitialEntropy(expectedHash: record.accountEntropyReceipt?.entropyHash, tx: tx)
         if record.accountEntropyReceipt != nil { return }
         record.accountEntropyReceipt = .init(version: 1, localSetup: localSetup, entropyHash: entropy.hash)
@@ -172,23 +187,26 @@ enum BConnectedLocalAccountSetup {
 
     static func prepare(
         db: any DB,
+        journal: BConnectedEnrollmentJournal = .signup,
         validateNative: (BConnectedEnrollmentRecord, BConnectedEnrollmentObservation.Account, DBWriteTransaction) throws -> Void
     ) throws {
         try db.writeWithRollbackIfThrows { tx in
-            try prepare(tx: tx, validateNative: validateNative)
+            try prepare(tx: tx, journal: journal, validateNative: validateNative)
         }
     }
 
     static func prepare(
         tx: DBWriteTransaction,
+        journal: BConnectedEnrollmentJournal = .signup,
         validateNative: (BConnectedEnrollmentRecord, BConnectedEnrollmentObservation.Account, DBWriteTransaction) throws -> Void
     ) throws {
-        let values = KeyValueStore(collection: "BConnectedEnrollment.v1")
+        let values = KeyValueStore(collection: journal.collection)
         var record: BConnectedEnrollmentRecord
         do {
             guard let bytes = values.getData("attempt", transaction: tx) else { throw BConnectedEnrollmentError.missingAttempt }
             record = try JSONDecoder().decode(BConnectedEnrollmentRecord.self, from: bytes)
             try record.validate()
+            guard record.journalScope == journal else { throw BConnectedEnrollmentError.immutableConflict }
         } catch { throw BConnectedEnrollmentError.persistenceUnavailable }
         guard let account = record.installedAccount else { throw BConnectedEnrollmentError.immutableConflict }
         try validateNative(record, account, tx)

@@ -176,7 +176,13 @@ extension TSAccountManagerImpl {
             }
         } else {
             // Never overwrite a registered, deregistered, partial legacy, or recovery account.
-            guard !pending, case .unregistered = AccountState(kvStore: kvStore, tx: tx).registrationState,
+            try validateBConnectedEmptyAccount(tx: tx)
+        }
+    }
+
+    func validateBConnectedEmptyAccount(tx: DBReadTransaction) throws {
+            guard kvStore.fetchValue(Bool.self, forKey: Keys.bconnectedPendingServices, tx: tx) != true,
+                  case .unregistered = AccountState(kvStore: kvStore, tx: tx).registrationState,
                   [Keys.localAci, Keys.localPni, Keys.localPhoneNumber, Keys.serverAuthToken,
                    Keys.reregistrationPhoneNumber, Keys.reregistrationAci].allSatisfy({ kvStore.fetchValue(String.self, forKey: $0, tx: tx) == nil }),
                   kvStore.fetchValue(Int64.self, forKey: Keys.deviceId, tx: tx) == nil,
@@ -184,7 +190,6 @@ extension TSAccountManagerImpl {
                   getRegistrationId(for: .aci, tx: tx) == nil, getRegistrationId(for: .pni, tx: tx) == nil else {
                 throw BConnectedEnrollmentError.immutableConflict
             }
-        }
     }
 
     /// No eager cache mutation and no transaction completion callbacks: GRDB runs completion blocks

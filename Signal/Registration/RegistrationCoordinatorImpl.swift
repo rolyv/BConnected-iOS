@@ -54,6 +54,14 @@ public class RegistrationCoordinatorImpl: RegistrationCoordinator {
     }
 
     @MainActor
+    public func makeBConnectedRecoveryCoordinator(endpoint: BConnectedEnrollmentEndpoint) throws -> BConnectedRecoveryCoordinator {
+        guard case .registering = mode, let installer = deps.bconnectedNativeInstaller else { throw BConnectedEnrollmentError.unavailable }
+        let configuration = try BConnectedDMAlphaConfiguration(info: Bundle.main.infoDictionary ?? [:], userAgent: OWSURLSession.userAgentHeaderValueSignalIos)
+        return BConnectedRecoveryCoordinator(db: deps.db, endpoint: endpoint, nativeInstaller: installer,
+            accountKeyStore: deps.accountKeyStore, udManager: SSKEnvironment.shared.udManagerRef, dmAlphaConfiguration: configuration)
+    }
+
+    @MainActor
     public func prepareBConnectedEnrollment(phone: String) async throws -> BConnectedEnrollmentPreparation {
         guard case .registering = mode else { throw BConnectedEnrollmentError.unavailable }
         guard E164(phone) != nil else { throw BConnectedEnrollmentError.invalidInput }

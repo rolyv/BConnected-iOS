@@ -18,6 +18,8 @@ public enum BConnectedEnrollmentError: Error, Equatable {
         case enrollmentUnavailable = "ENROLLMENT_UNAVAILABLE", enrollmentConflict = "ENROLLMENT_CONFLICT"
         case enrollmentExpired = "ENROLLMENT_EXPIRED", codeNotAccepted = "CODE_NOT_ACCEPTED", codeExpired = "CODE_EXPIRED"
         case rateLimited = "RATE_LIMITED", temporarilyUnavailable = "TEMPORARILY_UNAVAILABLE"
+        case recoveryUnavailable = "RECOVERY_UNAVAILABLE", recoveryConflict = "RECOVERY_CONFLICT"
+        case recoveryExpired = "RECOVERY_EXPIRED", recoveryNotAuthorized = "RECOVERY_NOT_AUTHORIZED"
     }
 }
 

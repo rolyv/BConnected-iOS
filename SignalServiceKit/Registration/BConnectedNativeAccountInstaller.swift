@@ -41,6 +41,20 @@ public struct BConnectedNativeAccountInstaller {
         accountManager.publishBConnectedRegistrationAfterCommit()
     }
 
+    /// Read-only preflight before authorizing remote replacement. Existing local keys are never erased.
+    func validateRecoveryPrerequisites(record: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account?,
+                                      tx: DBWriteTransaction) throws {
+        guard record.journalScope == .recovery, record.installedAccount == nil else { throw BConnectedEnrollmentError.immutableConflict }
+        try accountManager.validateBConnectedEmptyAccount(tx: tx)
+        for identity in [OWSIdentity.aci, .pni] {
+            guard identityManager.identityKeyPair(for: identity, tx: tx) == nil,
+                  !protocolStores.preKeyStore.forIdentity(identity).bconnectedHasAnyKeys(tx: tx) else {
+                throw BConnectedEnrollmentError.immutableConflict
+            }
+        }
+        if let account { _ = try prepare(record: record, account: account, tx: tx) }
+    }
+
     /// All parsing and validation precede the returned nonthrowing mutation closure. Callers must
     /// serialize the final enrollment receipt first and run both writes in the same SQLCipher tx.
     func prepare(record: BConnectedEnrollmentRecord, account: BConnectedEnrollmentObservation.Account,
