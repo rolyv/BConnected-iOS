@@ -336,6 +336,78 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
     }
 
     @MainActor
+    func testUnavailablePhoneStatusExhaustsPollingIntoSavedContinuation() async {
+        for error in [BConnectedEnrollmentError.unavailable, .rejected(.temporarilyUnavailable, retryAfterSeconds: nil)] {
+            let (model, community, account) = fixture(member: false)
+            community.verified = false
+            community.beforePhoneRefresh = { throw error }
+            model.setActive(true); await settle(model)
+            XCTAssertEqual(model.screen, .verifying)
+            XCTAssertFalse(model.canCheck); XCTAssertFalse(model.canSend)
+
+            for _ in 0..<4 { model.tick(Date().addingTimeInterval(1000)); await settle(model) }
+            XCTAssertEqual(community.phoneReads, 5)
+            XCTAssertEqual(model.screen, .continuation)
+            XCTAssertTrue(model.hasSavedSetup)
+            XCTAssertTrue(model.canContinue)
+            XCTAssertFalse(model.canCheck); XCTAssertFalse(model.canSend)
+            model.tick(Date().addingTimeInterval(2000)); await settle(model)
+            XCTAssertEqual(community.phoneReads, 5, "The continuation screen must not start another automatic polling cycle")
+            XCTAssertEqual(community.sends, 0)
+            XCTAssertTrue(account.calls.isEmpty)
+        }
+    }
+
+    @MainActor
+    func testManualPhoneStatusContinuationRechecksSameSavedSetupWithoutSMS() async {
+        let (model, community, account) = fixture(member: false)
+        community.verified = false
+        community.beforePhoneRefresh = { throw BConnectedEnrollmentError.unavailable }
+        let savedPhone = community.savedPhone
+        model.setActive(true); await settle(model)
+        for _ in 0..<4 { model.tick(Date().addingTimeInterval(1000)); await settle(model) }
+        XCTAssertEqual(model.screen, .continuation)
+        let exhaustedReads = community.phoneReads
+
+        community.beforePhoneRefresh = nil
+        model.continueSetup(); await settle(model)
+        XCTAssertEqual(community.phoneReads, exhaustedReads + 1)
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertTrue(model.canCheck); XCTAssertTrue(model.canSend)
+        XCTAssertEqual(community.savedPhone, savedPhone)
+        XCTAssertTrue(community.hasPhoneOperation)
+        XCTAssertFalse(community.verified)
+        XCTAssertEqual(community.applications, 0)
+        XCTAssertEqual(community.sends, 0)
+        XCTAssertEqual(community.codeChecks, 0)
+        XCTAssertEqual(community.correctionCalls, 0)
+        XCTAssertTrue(community.intentRetries.isEmpty)
+        XCTAssertTrue(account.calls.isEmpty)
+    }
+
+    @MainActor
+    func testFreshPhoneStatusKeepsCodeFlowAfterPollingBudgetExhausted() async {
+        let (model, community, account) = fixture(member: false)
+        community.verified = false; community.smsSeconds = 30
+        model.setActive(true); await settle(model)
+        for _ in 0..<4 { model.tick(Date().addingTimeInterval(1000)); await settle(model) }
+        XCTAssertEqual(community.phoneReads, 5)
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertTrue(model.canCheck)
+        XCTAssertFalse(model.canSend, "Only a fresh server response can end the SMS cooldown")
+
+        community.checkError = .rejected(.codeNotAccepted, retryAfterSeconds: nil)
+        model.code = "123456"; model.verifyCode(); await settle(model)
+        XCTAssertEqual(community.codeChecks, 1)
+        XCTAssertEqual(model.screen, .verifying)
+        XCTAssertEqual(model.errors[.code], "That code isn’t right. Try again.")
+        XCTAssertTrue(model.canCheck)
+        XCTAssertFalse(model.canSend)
+        XCTAssertEqual(community.sends, 0)
+        XCTAssertTrue(account.calls.isEmpty)
+    }
+
+    @MainActor
     func testExplicitCodeActionGetsFreshBoundedPollingBudget() async {
         let (model, community, _) = fixture(member: false)
         community.verified = false; community.smsSeconds = 30
@@ -727,7 +799,7 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         var status: BConnectedCommunityMember.Status = .approved
         var freshStatus: BConnectedCommunityMember.Status = .approved
         var smsSeconds: Int? = 0, checkSeconds: Int? = 0
-        var sends = 0, approvalReads = 0, phoneReads = 0
+        var applications = 0, sends = 0, codeChecks = 0, approvalReads = 0, phoneReads = 0
         var intentWait: Date?
         var intentRetries: [Bool] = []
         var beforePhoneRefresh: (() async throws -> Void)?
@@ -750,9 +822,9 @@ final class BConnectedEnrollmentViewModelTest: XCTestCase {
         }
         func draft() throws -> BConnectedSignupDraft? { nil }
         func saveDraft(_ draft: BConnectedSignupDraft) throws {}
-        func applyPhone(name: String, year: Int, phone: String) async throws {}
+        func applyPhone(name: String, year: Int, phone: String) async throws { applications += 1 }
         func sendPhoneCode(explicitlyResendAfterUncertainOutcome: Bool, mayDispatch: () -> Bool) async throws { if mayDispatch() { sends += 1; hasPhoneOperation = true } }
-        func checkPhoneCode(_ code: String) async throws { if let checkError { throw checkError }; verified = true }
+        func checkPhoneCode(_ code: String) async throws { codeChecks += 1; if let checkError { throw checkError }; verified = true }
         func refreshPhoneVerification() async throws { phoneReads += 1; try await beforePhoneRefresh?() }
         func correctPhone(_ replacementPhone: String) async throws {
             correctionCalls += 1; correctingReplacement = replacementPhone

@@ -463,7 +463,10 @@ final class BConnectedEnrollmentViewModel: ObservableObject {
             return
         }
         guard [.verifying, .correctingPhone, .resolvingMembership, .settingUp].contains(screen), polls < 4 else {
-            if screen == .settingUp || screen == .resolvingMembership || screen == .correctingPhone { screen = .continuation }
+            // Exhausted status failures cannot authorize code controls. Offer a manual
+            // check of the saved setup instead of leaving verification disabled forever.
+            if screen == .settingUp || screen == .resolvingMembership || screen == .correctingPhone
+                || (screen == .verifying && !freshPhoneObservation) { screen = .continuation }
             return
         }
         let waits: [TimeInterval] = [2, 5, 10, 20]
