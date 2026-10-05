@@ -208,6 +208,16 @@ public class UserNotificationPresenter {
         do {
             try await Self.notificationCenter.add(request)
         } catch {
+            let notificationError = error as NSError
+            if notificationError.domain == UNErrorDomain {
+                // The system can report an undocumented repository error when permission is denied.
+                // Check current authorization rather than depending on a private error code.
+                let settings = await Self.notificationCenter.notificationSettings()
+                if settings.authorizationStatus == .denied {
+                    Logger.info("Notification not presented because permission is denied (error code \(notificationError.code)).")
+                    return
+                }
+            }
             owsFailDebug("Error presenting notification with identifier \(notificationIdentifier): \(error)")
         }
     }
